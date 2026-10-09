@@ -1,0 +1,148 @@
+# Time Flows Away — native Windows MVP
+
+Rust edition 2024, egui/eframe + wgpu, no browser and no Wallpaper Engine.
+Licensed under the root Apache-2.0 LICENSE; see NOTICE for attribution.
+The original `../src/` files remain the implementation reference.
+
+## Build and run on Windows 11 x64
+
+Install Rust with the MSVC toolchain and Visual Studio Build Tools (Desktop
+Development with C++, including a Windows SDK). From this directory:
+
+```powershell
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --locked --release
+.\target\release\time-flows-away-native.exe --preview
+.\target\release\time-flows-away-native.exe
+```
+
+Rust 1.99.0 is pinned in rust-toolchain.toml. A console is retained for diagnostic
+messages. Preview is a normal window; Esc closes it. In wallpaper mode hold
+**Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Closing the
+console also terminates the application; use the chord for orderly detachment.
+No administrator privileges are required.
+
+The GitHub Actions workflow `Native Windows MVP` runs formatting, Clippy, tests,
+and a release build on Windows for pull requests, pushes to the feature branch
+or master, and manual dispatch. Download `time-flows-away-windows-x64` from the
+run's artifacts and extract the executable. The workflow must first be pushed
+before GitHub can run it. CI compilation does **not** test desktop embedding.
+
+## Architecture and safety
+
+- `wallpaper/clock.rs`: pure local calendar calculations and six boundary tests.
+- `wallpaper/render.rs`: date, time, two date progress bars, three time bars,
+  Chinese heading and English footer. One scheduled clock update per second.
+- `app.rs`: event-driven lifecycle, system font loaded once, preview status.
+- `desktop/windows.rs`: borrowed Shell HWND discovery, checked style/parent/
+  placement calls, one-second bounded Shell message, geometry and layer checks.
+  All unsafe Win32 calls are isolated here. Only our window is modified.
+- `desktop/supervisor.rs`: wallpaper mode starts a renderer child process.
+  eframe cannot rebuild an externally destroyed root HWND in place. A sleeping
+  lifetime-monitor thread in the renderer detects a lost/recycled HWND and exits
+  with code 75; the supervisor restarts only its own child after two seconds.
+  Other exit codes stop the supervisor. This extra process/thread is specifically
+  for Explorer recovery, not rendering. Destruction teardown is performed by the
+  OS; normal closure cancels/joins the monitor and restores our own window styles.
+
+Classic Shell uses a separate WorkerW behind the icon host. Raised desktop is
+recognized by Progman's WS_EX_NOREDIRECTIONBITMAP; the application becomes an
+opaque layered child of Progman below SHELLDLL_DefView and above its WorkerW.
+Unexpected hierarchy, style/parent/DPI mismatch, or failed positioning rolls back
+to a visible preview. WS_EX_TOOLWINDOW excludes the wallpaper from task switching;
+WS_EX_NOACTIVATE and WS_EX_TRANSPARENT prevent focus/interaction with the wallpaper.
+There is no Explorer injection, termination, process modification, wallpaper
+registry modification, or change to Shell window styles/z-order.
+
+Surviving-window reparenting and primary display resizing are checked every two
+seconds; unchanged geometry does not trigger SetWindowPos. A fresh renderer that
+cannot attach after an Explorer restart falls back to preview; restart the
+application once Explorer has recovered. Retry loops are not allowed to hide
+permanent composition or hierarchy failures.
+
+## Source analysis and intentional differences
+
+The original HTML groups heading, date plus year/month bars, time plus day/hour/
+minute bars, and footer into a centered column. CSS defines #161616 background,
+#c8c8c8 text, 100px bold text, 530x10px bars with 5px vertical gaps, a 30px rounded
+text panel and 10x30px padding. The manifest overrides several CSS defaults:
+
+| Property | Manifest default used by MVP |
+|---|---|
+| Heading/footer | 时光飞逝 / Time flows away |
+| Date/time | y.m.d / h:m:s, 24-hour |
+| Font/sizes | Microsoft JhengHei; 100px, footer 90px |
+| Year/month/day/hour/minute colors | #bcbdbe / #c75e53 / #fffd5d / #4790e5 / #84d84b |
+| Alignment/background | centered / #161616 |
+| Progress width | scroll_size 100 × 5.3 = 530px |
+
+The original year fraction is `(month_index + month_fraction) / 12`, giving every
+month equal weight. MVP uses `(day_of_year_zero_based + day_fraction) / days_in_year`.
+Month progress uses actual month length; century/leap-year boundaries are tested.
+Day/hour/minute progress follows local civil time (86,400 / 3,600 / 60 seconds),
+not elapsed UTC duration across DST. Clock changes are reflected on the next tick.
+
+Bars step once per second instead of the CSS continuous one-second transition.
+The layout uses fixed centered baselines and uniformly shrinks on small previews;
+it is not a pixel-identical CSS layout. With a solid background the panel is the
+same color as the page, so its rounded outline is invisible and is omitted.
+Windows Microsoft JhengHei bold is loaded from the system once, falling back to
+JhengHei/YaHei then egui fonts; Linux preview uses a local Noto Sans CJK font.
+Missing CJK fonts may show missing glyphs.
+Fonts, kerning and egui rasterization differ from browser rendering. egui logical
+points scale with display DPI; physical measurements need checking on Windows.
+
+Original properties identified for later stages: colors, position, sizes, 12/24h,
+weekday, date/time formats, headings, font, background file, text-mask opacity,
+and anniversary/countdown with day/detail/very-detail modes, prefix and suffix.
+These are deliberately not configurable in MVP. TOML settings, tray, autorun,
+single-instance enforcement, multi-monitor rendering, and sleep/wake support are
+out of scope until the Windows integration is validated.
+
+## Windows manual acceptance checklist (not run in Linux)
+
+Use Windows 11 **24H2 or newer** and record the build number and GPU/driver:
+
+1. Run `--preview`: heading, date, ticking seconds, five colored progress bars,
+   footer. Capture a screenshot at 100% DPI and compare against the web reference.
+2. Run without arguments: content behind icons, icons visible and clickable;
+   select/drag icons, use desktop context menu, and toggle icon visibility.
+   Verify wallpaper is absent from Alt+Tab/taskbar and does not take focus.
+3. Press Win+D twice; wallpaper remains on desktop and never covers normal apps.
+4. Restart Windows Explorer manually in Task Manager. Confirm old renderer exits,
+   a new one attaches, no duplicate renderer accumulates, icons remain usable.
+   If preview appears before Shell is ready, restart the app and record the result.
+5. Change primary resolution, DPI (100%, 125%, 150%) and primary display assignment.
+   Verify bounds, crisp text, bar proportions and layering; other displays are
+   intentionally outside MVP scope.
+6. Hold Ctrl+Alt+Shift+Q for >=1s. Both supervisor and renderer should exit, no
+   leftover window or desktop artifacts, no modified wallpaper setting.
+7. Observe CPU/RAM/GPU in Task Manager for at least 60 seconds at idle and report
+   both processes together. No performance figures have been measured on Windows.
+
+**Unverified risks:** DX12 flip-model presentation into a layered child on raised
+Shell may be black/invisible despite successful Win32 calls; compilation cannot
+establish correct composition. If seen, stop acceptance and investigate a native
+D3D11/DXGI blit renderer or a verified Shell-compatible surface path. No D3D11
+fallback is implemented yet. Explorer destruction/recreation timing, DPI-awareness
+compatibility with SetParent, click-through and icon-hidden hierarchy changes
+also require these manual tests. Stage 2 acceptance is pending that evidence.
+
+Current automatic results are recorded in VALIDATION.md; they are separate from
+this manual checklist and do not certify Windows desktop behavior.
+
+## Research references
+
+Lively Wallpaper `WinDesktopCore.cs` at commit
+`25a0a5f4ed1988ff42117d3a17feb321062237fe`:
+https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively/Core/WinDesktopCore.cs
+
+Its raised-desktop commentary and observed hierarchy informed this independently
+written integration. Its GPLv3 code is not copied into this Apache-2.0 project.
+Microsoft Win32 API contracts:
+https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setparent
+https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setwindowpos
+https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setlayeredwindowattributes
+https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw

@@ -1,0 +1,8 @@
+Time Flows Away Native MVP
+Based on the design and behavior of twenty-zhang/time-flows-away
+https://github.com/twenty-zhang/time-flows-away
+Original wallpaper credits Dynameis's "The Clock".
+Original web files and the root Apache-2.0 license are retained unchanged.
+Native implementation is licensed under Apache-2.0.
+Lively Wallpaper was consulted for shell behavior; no GPL source was copied.
+Windows system fonts are loaded locally and are not redistributed.

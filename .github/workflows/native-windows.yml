@@ -1,0 +1,50 @@
+name: Native Windows MVP
+on:
+  push:
+    branches: [master, feat/native-win11-wallpaper]
+    paths: ['native/**', '.github/workflows/native-windows.yml']
+  pull_request:
+    paths: ['native/**', '.github/workflows/native-windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.0
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --locked --release
+      - name: Package executable and documentation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target/dist | Out-Null
+          Copy-Item target/release/time-flows-away-native.exe target/dist/
+          Copy-Item README.md, NOTICE, ../LICENSE target/dist/
+      - name: Upload Windows x64 executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: time-flows-away-windows-x64
+          path: native/target/dist/
+          if-no-files-found: error
