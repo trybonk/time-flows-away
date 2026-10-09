@@ -1,9 +1,11 @@
+#[cfg(any(windows, test))]
+mod order;
 #[cfg(windows)]
 pub mod supervisor;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::Desktop;
+pub use windows::{Desktop, wallpaper_viewport};
 #[cfg(not(windows))]
 pub struct Desktop;
 #[cfg(not(windows))]

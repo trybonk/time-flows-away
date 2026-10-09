@@ -40,7 +40,7 @@ impl WallpaperApp {
                 status: None,
             },
             Err(e) => {
-                eprintln!("Desktop attachment failed: {e}");
+                crate::diagnostics::event(&format!("Desktop attachment failed: {e}"));
                 Self {
                     desktop: None,
                     status: Some(format!("Preview: {e}. Esc to close")),
@@ -58,7 +58,7 @@ impl eframe::App for WallpaperApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if let Err(e) = desktop.maintain() {
-                eprintln!("Desktop recovery: {e}");
+                crate::diagnostics::event(&format!("Desktop recovery: {e}"));
                 self.desktop = None;
                 self.status = Some(format!("Preview: {e}. Esc to close"));
             }

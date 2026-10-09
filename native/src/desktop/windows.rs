@@ -5,13 +5,58 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{GetLastError, HWND, LPARAM, POINT, RECT, SetLastError},
-    Graphics::Gdi::ScreenToClient,
+    Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SetLastError, WPARAM},
+    Graphics::Gdi::{
+        ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
+        ScreenToClient,
+    },
     UI::{
+        HiDpi::GetDpiForSystem,
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT},
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::*,
     },
 };
+
+const SUBCLASS_ID: usize = 1;
+fn child_style(bits: u32) -> u32 {
+    (bits & !(WS_OVERLAPPEDWINDOW | WS_POPUP)) | WS_CHILD
+}
+fn child_extended_style(bits: u32, raised: bool) -> u32 {
+    let bits = (bits & !(WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE))
+        | WS_EX_TOOLWINDOW
+        | WS_EX_NOACTIVATE
+        | WS_EX_TRANSPARENT;
+    if raised { bits | WS_EX_LAYERED } else { bits }
+}
+// winit re-applies cached top-level styles when it first shows the window.
+// Preserve our child styles during those changes, rather than repairing a
+// visible window afterwards. The callback only subclasses our own HWND.
+unsafe extern "system" fn child_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    raised: usize,
+) -> LRESULT {
+    unsafe {
+        if message == WM_STYLECHANGING && lparam != 0 {
+            let styles = &mut *(lparam as *mut STYLESTRUCT);
+            match wparam as i32 {
+                GWL_STYLE => styles.styleNew = child_style(styles.styleNew),
+                GWL_EXSTYLE => styles.styleNew = child_extended_style(styles.styleNew, raised != 0),
+                _ => (),
+            }
+        } else if message == WM_WINDOWPOSCHANGING && lparam != 0 {
+            let position = &mut *(lparam as *mut WINDOWPOS);
+            position.flags |= SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER;
+        } else if message == WM_NCDESTROY {
+            RemoveWindowSubclass(hwnd, Some(child_window_proc), id);
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
+}
 
 fn owns(hwnd: HWND) -> bool {
     let mut pid = 0;
@@ -173,6 +218,28 @@ fn discover() -> Result<Layer, String> {
     }
 }
 
+/// Called by eframe after the event loop enables DPI awareness, before it
+/// creates the window and configures its first wgpu surface. Thus the first
+/// frame already has the primary display's client size instead of 1100x750.
+pub fn wallpaper_viewport(builder: eframe::egui::ViewportBuilder) -> eframe::egui::ViewportBuilder {
+    unsafe {
+        let mut monitor: MONITORINFO = std::mem::zeroed();
+        monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let handle = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        if GetMonitorInfoW(handle, &mut monitor) == 0 {
+            crate::diagnostics::event("Primary display size unavailable before window creation");
+            return builder;
+        }
+        let dpi = GetDpiForSystem().max(96) as f32;
+        let width = (monitor.rcMonitor.right - monitor.rcMonitor.left) as f32 * 96.0 / dpi;
+        let height = (monitor.rcMonitor.bottom - monitor.rcMonitor.top) as f32 * 96.0 / dpi;
+        builder
+            .with_inner_size([width, height])
+            .with_position([0.0, 0.0])
+            .with_active(false)
+    }
+}
+
 pub struct Desktop {
     hwnd: HWND,
     original_parent: HWND,
@@ -182,6 +249,7 @@ pub struct Desktop {
     layer: Layer,
     last_probe: Instant,
     closing: bool,
+    subclassed: bool,
     monitor: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
 }
 impl Desktop {
@@ -205,6 +273,7 @@ impl Desktop {
                 last_probe: Instant::now(),
                 monitor: None,
                 closing: false,
+                subclassed: false,
             };
             desktop.embed()?;
             if std::env::args().any(|arg| arg == "--wallpaper-worker") {
@@ -236,19 +305,20 @@ impl Desktop {
             if !owns(self.hwnd) {
                 return Err("Wallpaper HWND no longer exists".into());
             }
-            let bits = (self.original_style
-                & !((WS_POPUP
-                    | WS_CAPTION
-                    | WS_THICKFRAME
-                    | WS_SYSMENU
-                    | WS_MINIMIZEBOX
-                    | WS_MAXIMIZEBOX) as isize))
-                | (WS_CHILD | WS_VISIBLE) as isize;
-            let mut extended = (self.original_ex_style & !(WS_EX_APPWINDOW as isize))
-                | (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize;
-            if self.layer.raised {
-                extended |= WS_EX_LAYERED as isize;
-            }
+            check(
+                SetWindowSubclass(
+                    self.hwnd,
+                    Some(child_window_proc),
+                    SUBCLASS_ID,
+                    usize::from(self.layer.raised),
+                ),
+                "SetWindowSubclass",
+            )?;
+            self.subclassed = true;
+            let bits = child_style(self.original_style as u32) as isize;
+            // Keep eframe's hidden initial state until the first correctly sized frame.
+            let extended =
+                child_extended_style(self.original_ex_style as u32, self.layer.raised) as isize;
             set_style(self.hwnd, GWL_STYLE, bits)?;
             set_style(self.hwnd, GWL_EXSTYLE, extended)?;
             if self.layer.raised {
@@ -262,75 +332,104 @@ impl Desktop {
             Ok(())
         }
     }
-    fn position(&self, force: bool) -> Result<(), String> {
+    fn raised_order_valid(&self) -> Result<bool, String> {
+        if !self.layer.raised {
+            return Ok(true);
+        }
+        // GetWindow siblings are ordered from top to bottom. Bound traversal
+        // and reject recycled handles instead of risking an endless Shell walk.
         unsafe {
-            // Primary display only in MVP. Translate physical screen coordinates to parent client.
-            let mut origin = POINT { x: 0, y: 0 };
+            let mut siblings = Vec::new();
+            let mut hwnd = GetWindow(self.layer.parent, GW_CHILD);
+            while !hwnd.is_null() {
+                if siblings.len() >= 256 || siblings.contains(&(hwnd as usize)) {
+                    return Err("Unstable desktop child hierarchy".into());
+                }
+                siblings.push(hwnd as usize);
+                hwnd = GetWindow(hwnd, GW_HWNDNEXT);
+            }
+            Ok(super::order::between(
+                &siblings,
+                self.hwnd as usize,
+                self.layer.icons as usize,
+                self.layer.worker as usize,
+            ))
+        }
+    }
+    fn position(&self, frame_changed: bool) -> Result<(), String> {
+        unsafe {
+            let mut monitor: MONITORINFO = std::mem::zeroed();
+            monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
             check(
-                ScreenToClient(self.layer.parent, &mut origin),
-                "ScreenToClient",
+                GetMonitorInfoW(
+                    MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+                    &mut monitor,
+                ),
+                "GetMonitorInfoW",
             )?;
-            let width = GetSystemMetrics(SM_CXSCREEN);
-            let height = GetSystemMetrics(SM_CYSCREEN);
+            let screen = monitor.rcMonitor;
+            let width = screen.right - screen.left;
+            let height = screen.bottom - screen.top;
             if width <= 0 || height <= 0 {
                 return Err("Invalid primary monitor dimensions".into());
             }
-            let after = if self.layer.raised {
-                self.layer.icons
-            } else {
-                HWND_BOTTOM
+            let mut desired = POINT {
+                x: screen.left,
+                y: screen.top,
             };
-            let mut current: RECT = std::mem::zeroed();
-            check(GetWindowRect(self.hwnd, &mut current), "GetWindowRect")?;
-            if force
-                || current.left != 0
-                || current.top != 0
-                || current.right != width
-                || current.bottom != height
-                || (self.layer.raised && GetWindow(self.hwnd, GW_HWNDPREV) != after)
-            {
+            check(
+                ScreenToClient(self.layer.parent, &mut desired),
+                "ScreenToClient",
+            )?;
+            // Compare client geometry in the same coordinate system. Comparing
+            // outer screen rectangles against system metrics could trigger DPI churn.
+            let mut actual = POINT { x: 0, y: 0 };
+            check(ClientToScreen(self.hwnd, &mut actual), "ClientToScreen")?;
+            check(
+                ScreenToClient(self.layer.parent, &mut actual),
+                "ScreenToClient",
+            )?;
+            let mut client: RECT = std::mem::zeroed();
+            check(GetClientRect(self.hwnd, &mut client), "GetClientRect")?;
+            let geometry_changed = actual.x != desired.x
+                || actual.y != desired.y
+                || client.right - client.left != width
+                || client.bottom - client.top != height;
+            let order_valid = self.raised_order_valid()?;
+            if frame_changed || geometry_changed || !order_valid {
+                // Our placement calls bypass the guard, which prevents winit from
+                // raising the window when it updates unrelated cached flags.
+                let mut flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING;
+                if frame_changed {
+                    flags |= SWP_FRAMECHANGED;
+                }
+                if !frame_changed && order_valid {
+                    flags |= SWP_NOZORDER;
+                }
+                if !geometry_changed {
+                    flags |= SWP_NOMOVE | SWP_NOSIZE;
+                }
+                let after = if self.layer.raised {
+                    self.layer.icons
+                } else {
+                    HWND_BOTTOM
+                };
+                crate::diagnostics::event(&format!(
+                    "Desktop placement: frame={frame_changed} geometry={geometry_changed} order={} size={width}x{height}",
+                    !order_valid
+                ));
                 check(
-                    SetWindowPos(
-                        self.hwnd,
-                        after,
-                        origin.x,
-                        origin.y,
-                        width,
-                        height,
-                        SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
-                    ),
+                    SetWindowPos(self.hwnd, after, desired.x, desired.y, width, height, flags),
                     "SetWindowPos",
                 )?;
             }
             if GetParent(self.hwnd) != self.layer.parent {
                 return Err("Shell parent changed during attachment".into());
             }
-            if self.layer.raised {
-                // Refuse a hierarchy in which another shell wallpaper covers our window.
-                let mut sibling = GetWindow(self.hwnd, GW_HWNDPREV);
-                let mut icons_above = false;
-                while !sibling.is_null() {
-                    if sibling == self.layer.icons {
-                        icons_above = true;
-                        break;
-                    }
-                    sibling = GetWindow(sibling, GW_HWNDPREV);
-                }
-                if !icons_above {
-                    return Err("Unable to place wallpaper below icons".into());
-                }
-                let mut sibling = GetWindow(self.hwnd, GW_HWNDNEXT);
-                let mut worker_below = false;
-                while !sibling.is_null() {
-                    if sibling == self.layer.worker {
-                        worker_below = true;
-                        break;
-                    }
-                    sibling = GetWindow(sibling, GW_HWNDNEXT);
-                }
-                if !worker_below {
-                    return Err("Shell WorkerW would cover wallpaper; using preview".into());
-                }
+            if !self.raised_order_valid()? {
+                return Err(
+                    "Unable to place wallpaper between desktop icons and Shell background".into(),
+                );
             }
             Ok(())
         }
@@ -349,9 +448,12 @@ impl Desktop {
                 || GetParent(self.hwnd) != self.layer.parent
             {
                 // Detach before discovery; never attach to an invalid/reused handle blindly.
-                self.restore()?;
+                self.restore(false)?;
                 self.layer = discover()?;
                 self.embed()?;
+                // This HWND already had a painted frame before recovery; its
+                // eframe first-frame show hook is not run for a second time.
+                ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             } else {
                 self.position(false)?;
             }
@@ -369,10 +471,20 @@ impl Desktop {
                 .all(|key| GetAsyncKeyState(i32::from(*key)) < 0)
         }
     }
-    fn restore(&self) -> Result<(), String> {
+    fn restore(&mut self, show_preview: bool) -> Result<(), String> {
         unsafe {
             if !owns(self.hwnd) {
                 return Ok(());
+            }
+            if self.subclassed {
+                check(
+                    RemoveWindowSubclass(self.hwnd, Some(child_window_proc), SUBCLASS_ID),
+                    "RemoveWindowSubclass",
+                )?;
+                self.subclassed = false;
+            }
+            if !show_preview {
+                ShowWindow(self.hwnd, SW_HIDE);
             }
             parent(self.hwnd, self.original_parent)?;
             set_style(self.hwnd, GWL_STYLE, self.original_style)?;
@@ -386,7 +498,9 @@ impl Desktop {
                     r.top,
                     r.right - r.left,
                     r.bottom - r.top,
-                    SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                    SWP_NOACTIVATE
+                        | SWP_FRAMECHANGED
+                        | if show_preview { SWP_SHOWWINDOW } else { 0 },
                 ),
                 "Restore preview window",
             )
@@ -402,8 +516,37 @@ impl Drop for Desktop {
             let _ = stop.send(());
             let _ = monitor.join();
         }
-        if let Err(error) = self.restore() {
-            eprintln!("Wallpaper detach failed: {error}");
+        if let Err(error) = self.restore(!self.closing) {
+            crate::diagnostics::event(&format!("Wallpaper detach failed: {error}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn first_show_retains_child_styles_without_early_visibility() {
+        let hidden = child_style(WS_OVERLAPPEDWINDOW);
+        assert_eq!(hidden & WS_VISIBLE, 0);
+        let shown = child_style(WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+        assert_ne!(shown & WS_CHILD, 0);
+        assert_ne!(shown & WS_VISIBLE, 0);
+        assert_eq!(shown & (WS_CAPTION | WS_THICKFRAME | WS_POPUP), 0);
+    }
+    #[test]
+    fn toolkit_style_reset_cannot_restore_taskbar_activation_or_borders() {
+        let bits = child_extended_style(
+            WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE,
+            true,
+        );
+        assert_eq!(
+            bits & (WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE),
+            0
+        );
+        assert_eq!(
+            bits & (WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TOOLWINDOW),
+            WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TOOLWINDOW
+        );
     }
 }

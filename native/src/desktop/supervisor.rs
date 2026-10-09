@@ -15,7 +15,9 @@ pub fn run() -> std::io::Result<ExitStatus> {
         if status.code() != Some(SHELL_LOST) {
             return Ok(status);
         }
-        eprintln!("Explorer destroyed the wallpaper window; restarting renderer in two seconds");
+        crate::diagnostics::event(
+            "Explorer destroyed the wallpaper window; restarting renderer in two seconds",
+        );
         thread::sleep(Duration::from_secs(2));
     }
 }

@@ -18,10 +18,10 @@ cargo build --locked --release
 .\target\release\time-flows-away-native.exe
 ```
 
-Rust 1.99.0 is pinned in rust-toolchain.toml. A console is retained for diagnostic
-messages. Preview is a normal window; Esc closes it. In wallpaper mode hold
-**Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Closing the
-console also terminates the application; use the chord for orderly detachment.
+Rust 1.99.0 is pinned in rust-toolchain.toml. Windows binaries use the GUI subsystem
+and do not create a terminal. Diagnostics go to
+`%LOCALAPPDATA%\TimeFlowsAway\app.log`. Preview is a normal window; Esc closes it. In wallpaper mode hold
+**Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Use the chord for orderly detachment; closing a terminal is no longer necessary.
 No administrator privileges are required.
 
 The GitHub Actions workflow `Native Windows MVP` runs formatting, Clippy, tests,
@@ -36,6 +36,7 @@ before GitHub can run it. CI compilation does **not** test desktop embedding.
 - `wallpaper/render.rs`: date, time, two date progress bars, three time bars,
   Chinese heading and English footer. One scheduled clock update per second.
 - `app.rs`: event-driven lifecycle, system font loaded once, preview status.
+- `diagnostics.rs`: errors and actual placement changes recorded without a console.
 - `desktop/windows.rs`: borrowed Shell HWND discovery, checked style/parent/
   placement calls, one-second bounded Shell message, geometry and layer checks.
   All unsafe Win32 calls are isolated here. Only our window is modified.
@@ -57,7 +58,17 @@ There is no Explorer injection, termination, process modification, wallpaper
 registry modification, or change to Shell window styles/z-order.
 
 Surviving-window reparenting and primary display resizing are checked every two
-seconds; unchanged geometry does not trigger SetWindowPos. A fresh renderer that
+seconds. Unchanged client geometry and valid relative order do not trigger
+SetWindowPos, even if unrelated Shell children are between the icon layer and
+our window. Runtime repairs neither activate nor show the window, and frame
+changes are only requested after style changes. Normal shutdown detaches hidden.
+
+The initial viewport is sized to the primary display before eframe configures
+its wgpu surface. Attachment preserves eframe's hidden state until the first
+painted frame. A subclass of our own HWND preserves child/layered/nonactivating
+styles when winit re-applies cached window styles on first show, and prevents
+its unrelated position updates from raising the wallpaper. The subclass is
+removed on detach and destruction; Shell windows are never subclassed. A fresh renderer that
 cannot attach after an Explorer restart falls back to preview; restart the
 application once Explorer has recovered. Retry loops are not allowed to hide
 permanent composition or hierarchy failures.
@@ -85,7 +96,8 @@ Day/hour/minute progress follows local civil time (86,400 / 3,600 / 60 seconds),
 not elapsed UTC duration across DST. Clock changes are reflected on the next tick.
 
 Bars step once per second instead of the CSS continuous one-second transition.
-The layout uses fixed centered baselines and uniformly shrinks on small previews;
+The layout uses centered baselines adjusted against the supplied Wallpaper Engine
+reference screenshot and uniformly shrinks on small previews;
 it is not a pixel-identical CSS layout. With a solid background the panel is the
 same color as the page, so its rounded outline is invisible and is omitted.
 Windows Microsoft JhengHei bold is loaded from the system once, falling back to
@@ -105,21 +117,26 @@ out of scope until the Windows integration is validated.
 
 Use Windows 11 **24H2 or newer** and record the build number and GPU/driver:
 
-1. Run `--preview`: heading, date, ticking seconds, five colored progress bars,
+1. Confirm double-clicking the executable creates no terminal. On several starts,
+   verify the first visible frame is already centered at full desktop size;
+   watch for a temporary small clock in the corner or activation of another window.
+   With another application in front, observe for at least a minute: the wallpaper
+   must not flash over it. If it does, keep `app.log` for diagnosis.
+2. Run `--preview`: heading, date, ticking seconds, five colored progress bars,
    footer. Capture a screenshot at 100% DPI and compare against the web reference.
-2. Run without arguments: content behind icons, icons visible and clickable;
+3. Run without arguments: content behind icons, icons visible and clickable;
    select/drag icons, use desktop context menu, and toggle icon visibility.
    Verify wallpaper is absent from Alt+Tab/taskbar and does not take focus.
-3. Press Win+D twice; wallpaper remains on desktop and never covers normal apps.
-4. Restart Windows Explorer manually in Task Manager. Confirm old renderer exits,
+4. Press Win+D twice; wallpaper remains on desktop and never covers normal apps.
+5. Restart Windows Explorer manually in Task Manager. Confirm old renderer exits,
    a new one attaches, no duplicate renderer accumulates, icons remain usable.
    If preview appears before Shell is ready, restart the app and record the result.
-5. Change primary resolution, DPI (100%, 125%, 150%) and primary display assignment.
+6. Change primary resolution, DPI (100%, 125%, 150%) and primary display assignment.
    Verify bounds, crisp text, bar proportions and layering; other displays are
    intentionally outside MVP scope.
-6. Hold Ctrl+Alt+Shift+Q for >=1s. Both supervisor and renderer should exit, no
+7. Hold Ctrl+Alt+Shift+Q for >=1s. Both supervisor and renderer should exit, no
    leftover window or desktop artifacts, no modified wallpaper setting.
-7. Observe CPU/RAM/GPU in Task Manager for at least 60 seconds at idle and report
+8. Observe CPU/RAM/GPU in Task Manager for at least 60 seconds at idle and report
    both processes together. No performance figures have been measured on Windows.
 
 **Unverified risks:** DX12 flip-model presentation into a layered child on raised
