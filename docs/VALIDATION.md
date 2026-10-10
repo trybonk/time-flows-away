@@ -22,13 +22,45 @@ digits stayed fixed, pause/resume, quality toggles, animation off, settings/save
 last-valid reload, custom font/image/timer and clean exit. The background startup
 and resize debounce follow-up also passed settings and Vulkan preview checks. Native
 DirectWrite pixel coverage, custom-font loading, texture bounds and absence of
-system-font copies have Windows-only tests compiled locally; their execution is
-delegated to the Windows GitHub Actions run for this commit.
+system-font copies also passed Windows MSVC tests in
+[run 38089263496](https://github.com/trybonk/time-flows-away/actions/runs/38089263496)
+for source commit `a16a83f`. Formatting, Clippy, the measurement-helper smoke,
+release build and executable/documentation artifact upload all passed in that run.
 
-Performance measurements and Windows CI outcomes are recorded after completion.
-Use the focused 0.3.1 checklist and `--performance` alongside the existing CPU/RAM
-CSV helper. User validation of 0.3.0 does not validate the new Windows rendering
-path, lock/power notifications, actual frame rate or hardware resource use.
+Actual Linux release measurements used the same Xvfb/Mesa llvmpipe setup and
+default scene as 0.3.0, high quality text enabled, eight seconds of warmup followed
+by a minute of sampling per mode. CPU below is **percent of one logical CPU**, not
+Windows Task Manager's percentage of the whole machine. RSS is process working
+set in MiB; software rendering also puts GPU resources into system RAM.
+
+| Mode / configured FPS | 0.3.0 CPU | 0.3.1 CPU | 0.3.0 steady RSS | 0.3.1 steady RSS |
+|---|---:|---:|---:|---:|
+| Preview / Off | 14.56% | 5.22% | 140.50 | 119.07 |
+| Preview / 30 | 177.61% | 91.77% | 144.26 | 120.24 |
+| Preview / 60 | 257.06% | 182.38% | 144.11 | 120.07 |
+| Settings / 30, focused | 184.37% | 91.86% | 144.71 | 128.58 |
+
+No continuing RSS growth occurred in these short intervals. A separate 30 FPS
+check logged 30.0 update FPS after warmup, with interval p95 34.92 ms. The 60 FPS
+software-rendered check logged 55.7 FPS and p95 25.33 ms; focused settings logged
+29.1 FPS. The preview atlas was 4096x256 (4 MiB), compared with the earlier
+16384x256 (16 MiB). CPU comparisons use the same **configured** FPS; the previous
+deadline bug overproduced frames, so these are not throughput measurements at
+identical actual FPS. These software-driver numbers cannot establish Windows
+RTX 3060 CPU/GPU percentages or exact RAM savings. Windows also uses a different
+ordinary-text path and avoids the full system-font copies retained on Linux.
+
+A separate warmed release headless probe of the same default CJK scene reduced
+scene construction from 24.90 to 9.42 microseconds per update and allocation calls
+from 134.2 to 42.6 per update. Tessellation changed from 8.77 to 6.09 microseconds;
+requested temporary allocation bytes changed from 67.6 to 49.6 KiB per update.
+This supports the text/scene cache change, but those costs were already too small
+to explain all of the user's reported CPU load. It is not a Windows GPU benchmark.
+
+Use the focused 0.3.1 checklist and `--performance` alongside the CPU/RAM CSV
+helper for hardware measurements and a 30-minute stability check. User validation
+of 0.3.0 does not validate the new text appearance, lock/power notifications,
+desktop composition, actual frame rate or hardware resource use.
 
 ## Earlier development results
 
