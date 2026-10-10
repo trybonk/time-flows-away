@@ -53,13 +53,18 @@ desktop embedding. Commands run from the repository root; binaries are under
 
 - `wallpaper/clock.rs`: pure local calendar calculations and six boundary tests.
 - `wallpaper/render.rs`: date, time, two date progress bars, three time bars,
-  Chinese heading and English footer. One scheduled clock update per second.
+  Chinese heading and English footer. Whole-second clock samples.
+- `wallpaper/animation.rs`: one-second linear bar transitions, pause/resume and
+  time-jump handling. Settings select off/30/60 FPS; default is 30 FPS.
 - `app.rs`: event-driven lifecycle, config refresh, pause state and preview status.
 - `config.rs`: versioned TOML settings, validation, atomic save and last-valid reload.
 - `assets.rs`: bounded PNG/JPEG decode and validated font loading on path changes.
 - `settings.rs`: independent egui window, unsaved draft, live preview and explicit Save.
 - `tray.rs`: Windows worker-owned tray; menu callbacks wake egui without busy polling.
 - `platform.rs`: session-local instance guards and the native file picker.
+- `platform/autostart.rs`: explicit per-user startup switch using only the
+  application's value in HKCU's Run key; quotes Unicode paths and preserves
+  renderer/config arguments. No worker/owner/settings arguments are registered.
 - `diagnostics.rs`: errors and actual placement changes recorded without a console.
 - `desktop/windows.rs`: borrowed Shell HWND discovery, checked style/parent/
   placement calls, one-second bounded Shell message, geometry and layer checks.
@@ -81,8 +86,14 @@ WS_EX_NOACTIVATE and WS_EX_TRANSPARENT prevent focus/interaction with the wallpa
 There is no Explorer injection, termination, process modification, wallpaper
 registry modification, or change to Shell window styles/z-order.
 
-Surviving-window reparenting and primary display resizing are checked every two
-seconds. Unchanged client geometry and valid relative order do not trigger
+Primary display resizing, DPI and relative order are checked every two seconds.
+Display/DPI/power notifications and the existing lifetime thread's primary-display
+snapshot wake rendering after display changes and sleep. Losing the Shell parent
+or icon host restarts only the worker through its supervisor, avoiding a temporary
+visible top-level window. Transient positioning failures retry for up to 15 seconds
+before the existing preview fallback. The supervisor waits up to 30 seconds for
+Explorer's desktop before starting a worker, including sign-in autorun.
+Unchanged client geometry and valid relative order do not trigger
 SetWindowPos, even if unrelated Shell children are between the icon layer and
 our window. Runtime repairs neither activate nor show the window, and frame
 changes are only requested after style changes. Normal shutdown detaches hidden.
@@ -119,7 +130,10 @@ Month progress uses actual month length; century/leap-year boundaries are tested
 Day/hour/minute progress follows local civil time (86,400 / 3,600 / 60 seconds),
 not elapsed UTC duration across DST. Clock changes are reflected on the next tick.
 
-Bars step once per second instead of the CSS continuous one-second transition.
+Bars interpolate each whole-second target over one second, matching the original
+CSS transition duration, including the backwards transition at a minute rollover.
+Resume and large/backwards clock jumps snap to current progress. Animation off
+retains the original native one-tick-per-second behavior.
 The layout uses centered baselines adjusted against the supplied Wallpaper Engine
 reference screenshot and uniformly shrinks on small previews;
 it is not a pixel-identical CSS layout. With a solid background the panel is the
@@ -134,7 +148,13 @@ failed glyphs) are cached, bounded and removed when no longer used. Wallpaper
 and live preview share this renderer. Settings input fields use the Segoe outline
 fallback. Linux preview uses installed Noto Color Emoji bitmaps for individual
 emoji; full Windows sequence shaping must be tested on Windows.
-Fonts, kerning and egui rasterization differ from browser rendering. egui logical
+High quality text uses egui glyphs rasterized at twice the requested size, then
+scales their geometry down while retaining high-resolution atlas texture data.
+The source layout/font atlas is cached by egui; no font decoding happens per frame.
+Geometry feathering and fractional text/rectangle positions remain enabled.
+This is grayscale antialiasing, not Windows ClearType, and does not enable MSAA
+or alter the OpenGL context/surface configuration. Emoji retain linear texture
+filtering. Fonts, kerning and egui rasterization differ from browser rendering. egui logical
 points scale with display DPI; physical measurements need checking on Windows.
 Both the GPU clear color and the painted panel use the same opaque #161616
 background. This avoids eframe's different translucent default clear color;
@@ -147,11 +167,18 @@ local civil time rather than UTC elapsed time across DST. System CJK fonts are
 registered for wallpaper text; the settings UI keeps egui's normal fonts.
 
 The first part of stage 5 provides a tray and session-local single-instance guards
-for wallpaper and settings; preview is independent. No autorun registration or
-multi-monitor rendering is implemented. Pausing freezes the sampled clock while
+for wallpaper and settings; preview is independent. Autorun is opt-in through
+Settings / System and affects only HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run's
+TimeFlowsAway value. Startup tests use an isolated test key, never the real Run
+entry. Additional-monitor rendering remains deferred. Pausing freezes clock
+digits and the current interpolated bars while
 maintenance/config checks continue every two seconds. Pause is temporary and
-resets after a renderer restart. Normal running requests one repaint per second;
-interactive egui events can request additional paints.
+resets after a renderer restart. Running requests 30/60 FPS for smooth bars, or
+one repaint per second with animation off. When a visible foreground window covers
+the primary work area, wallpaper reduces to one-second updates; occlusion is
+checked every two seconds. This is a rectangle-based optimization, not complete
+occlusion detection. Settings preview continues animating independently.
+Interactive egui events can request additional paints.
 Settings launched from the tray track an opened handle to the persistent
 supervisor, so they survive renderer recovery but close when the application
 exits. Quit also posts WM_CLOSE to the settings HWND after verifying its executable

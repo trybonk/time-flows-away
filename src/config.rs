@@ -22,6 +22,8 @@ pub struct Config {
     pub time_size: f32,
     pub footer_size: f32,
     pub font_path: String,
+    pub high_quality_text: bool,
+    pub animation_fps: u32,
     pub bar_width: f32,
     pub bar_height: f32,
     pub bar_gap: f32,
@@ -78,6 +80,8 @@ impl Default for Config {
             time_size: 100.0,
             footer_size: 90.0,
             font_path: String::new(),
+            high_quality_text: true,
+            animation_fps: 30,
             bar_width: 530.0,
             bar_height: 10.0,
             bar_gap: 5.0,
@@ -103,6 +107,9 @@ impl Config {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("Unsupported settings version".into());
+        }
+        if ![0, 30, 60].contains(&self.animation_fps) {
+            return Err("Animation rate must be 0, 30 or 60 FPS".into());
         }
         for (name, value, min, max) in [
             ("Header size", self.header_size, 8.0, 300.0),
@@ -339,6 +346,8 @@ mod tests {
         let c: Config = toml::from_str("header = 'Hello'").unwrap();
         assert_eq!(c.header, "Hello");
         assert_eq!(c.bar_width, 530.0);
+        assert!(c.high_quality_text);
+        assert_eq!(c.animation_fps, 30);
         c.validate().unwrap();
         assert!(toml::from_str::<Config>("typo = true").is_err());
     }
@@ -357,6 +366,10 @@ mod tests {
         c.bar_width = f32::NAN;
         assert!(c.validate().is_err());
         c.bar_width = 530.0;
+        c.animation_fps = 45;
+        assert!(c.validate().is_err());
+        c.animation_fps = 60;
+        c.validate().unwrap();
         c.version = 2;
         assert!(c.validate().is_err());
         c.version = 1;

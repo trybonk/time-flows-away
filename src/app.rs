@@ -1,9 +1,9 @@
 use crate::{assets::Assets, desktop::Desktop, options::Options};
-use chrono::{Local, NaiveDateTime, Timelike};
+use chrono::{Local, NaiveDateTime};
 use eframe::egui;
 use time_flows_away_native::{
     config::Store,
-    wallpaper::{clock::next_tick, render},
+    wallpaper::{animation::repaint_delay, render},
 };
 pub struct WallpaperApp {
     desktop: Option<Desktop>,
@@ -119,6 +119,7 @@ impl eframe::App for WallpaperApp {
         render::color(self.store.current.background).to_normalized_gamma_f32()
     }
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        let frame_started = std::time::Instant::now();
         let now = Local::now();
         #[cfg(windows)]
         if let Some(tray) = &self.tray {
@@ -147,6 +148,13 @@ impl eframe::App for WallpaperApp {
                     self.tray = None;
                 }
             }
+            #[cfg(windows)]
+            if let Some(desktop) = &self.desktop {
+                let dpi = desktop.pixels_per_point();
+                if (ctx.pixels_per_point() - dpi).abs() > 0.01 {
+                    ctx.set_pixels_per_point(dpi);
+                }
+            }
         } else {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.close(ctx);
@@ -171,12 +179,31 @@ impl eframe::App for WallpaperApp {
         {
             crate::diagnostics::event(&format!("Asset fallback: {error}"));
         }
+        let sampled = self.paused.unwrap_or(now.naive_local());
+        let animation_fps = self.store.current.animation_fps;
+        #[cfg(windows)]
+        let animation_fps = if self
+            .desktop
+            .as_ref()
+            .is_some_and(|desktop| !desktop.animation_visible())
+        {
+            0
+        } else {
+            animation_fps
+        };
+        let progress = self.assets.animation.sample(
+            sampled,
+            frame_started,
+            animation_fps > 0,
+            self.paused.is_some(),
+        );
         render::draw(
             ctx,
             self.paused.unwrap_or(now.naive_local()),
             &self.store.current,
             self.assets.texture.as_ref(),
             &mut self.assets.text,
+            progress,
         );
         if let Some(status) = &self.status {
             egui::Area::new(egui::Id::new("status"))
@@ -188,11 +215,8 @@ impl eframe::App for WallpaperApp {
                     }
                 });
         }
-        let next_frame = if self.paused.is_some() {
-            std::time::Duration::from_secs(2)
-        } else {
-            next_tick(now.nanosecond())
-        };
+        let next_frame = repaint_delay(now.naive_local(), animation_fps, self.paused.is_some())
+            .saturating_sub(frame_started.elapsed());
         // Keep config polling on its own deadline; rounding it to clock ticks
         // can otherwise turn the two-second interval into three seconds.
         ctx.request_repaint_after(next_frame.min(self.store.next_probe()));

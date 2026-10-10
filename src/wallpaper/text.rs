@@ -11,6 +11,7 @@ const CACHE_LIMIT: usize = 512;
 
 #[derive(Default)]
 pub struct TextRenderer {
+    pub high_quality: bool,
     // Cache failures too, so unavailable glyphs never trigger work every frame.
     emoji: HashMap<String, Option<TextureHandle>>,
     #[cfg(not(windows))]
@@ -33,6 +34,20 @@ impl Part {
 }
 
 impl TextRenderer {
+    fn plain(&self, painter: &Painter, text: String, font: &FontId, color: Color32) -> Part {
+        let factor = if self.high_quality { 2.0 } else { 1.0 };
+        let mut large_font = font.clone();
+        large_font.size *= factor;
+        let galley = painter.layout_no_wrap(text, large_font, color);
+        if factor == 1.0 {
+            return Part::Text(galley);
+        }
+        // Transform geometry while keeping the higher-resolution atlas glyphs.
+        // egui caches the source layout; no font/image decode happens per frame.
+        let mut shape = egui::epaint::TextShape::new(Pos2::ZERO, galley, color);
+        shape.transform(egui::emath::TSTransform::from_scaling(1.0 / factor));
+        Part::Text(shape.galley)
+    }
     pub fn retain_used<'a>(&mut self, text: impl IntoIterator<Item = &'a str>) {
         let used: HashSet<&str> = text.into_iter().flat_map(|s| s.graphemes(true)).collect();
         self.emoji.retain(|emoji, _| used.contains(emoji.as_str()));
@@ -76,11 +91,7 @@ impl TextRenderer {
                 .flatten();
             if let Some(texture) = texture {
                 if !plain.is_empty() {
-                    parts.push(Part::Text(painter.layout_no_wrap(
-                        std::mem::take(&mut plain),
-                        font.clone(),
-                        color,
-                    )));
+                    parts.push(self.plain(painter, std::mem::take(&mut plain), font, color));
                 }
                 parts.push(Part::Emoji(texture));
             } else {
@@ -88,11 +99,7 @@ impl TextRenderer {
             }
         }
         if !plain.is_empty() {
-            parts.push(Part::Text(painter.layout_no_wrap(
-                plain,
-                font.clone(),
-                color,
-            )));
+            parts.push(self.plain(painter, plain, font, color));
         }
         parts
     }

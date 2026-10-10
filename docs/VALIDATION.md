@@ -9,7 +9,10 @@ stability, the original flash mechanism or a separate resolution of the earlier
 one-second black background. OpenGL is now the Windows default; --wgpu retains
 DX12 for comparison.
 
-The settings/tray release needs its own Windows acceptance pass. Cloud compilation
+The user subsequently confirmed emoji/settings shutdown fixes and reported the
+existing settings/tray checklist looked correct. This is user acceptance of the
+previous build; new 0.3.0 startup/quality/display changes need focused checks.
+Cloud compilation
 and Linux rendering do not validate Windows tray, file picker, single-instance
 behavior or desktop composition. See SETTINGS-CHECKLIST.md.
 
@@ -192,3 +195,26 @@ checks settings lifetime handles against a live, exited and missing owner.
 The build run provides the native test/release result. Windows tray closure with
 Settings open/minimized and preservation across Explorer restart still require
 the focused checks in SETTINGS-CHECKLIST.md on the user's PC.
+
+Windows MSVC CI passed in
+[run 38065972038](https://github.com/trybonk/time-flows-away/actions/runs/38065972038).
+On 2026-10-10 the user confirmed these fixes worked, then reported the earlier
+manual settings/tray checklist was completed and appeared correct. The exact
+checks/version hash were not supplied, so this is reported acceptance rather
+than individually instrumented Windows results.
+
+## Startup, quality and primary display recovery — 0.3.0
+
+Adds an explicit per-user autorun switch, 2x text rasterization, optional 30/60 FPS
+bar interpolation (30 default), low-power animation-off mode, foreground-cover
+throttling, primary-display/DPI/power detection and bounded Shell recovery.
+Multiple-monitor rendering and release publication remain deferred by request.
+
+Linux tests cover intermediate bar frames, minute rollover, pause/resume and time
+jumps; config tests preserve old partial files and reject unsupported frame rates.
+Windows tests additionally cover native command-line Unicode/path quoting and
+startup-value write/read/removal under an isolated HKCU test key. CI exercises the
+PowerShell measurement helper using its own pwsh process; this checks the helper,
+not wallpaper resource use. Windows desktop composition, sign-in autorun,
+hardware GPU load and quality comparisons require the focused PC checks in
+SETTINGS-CHECKLIST.md.

@@ -51,5 +51,52 @@ if anything flashes, disappears or steals focus.
 - [ ] Compare total CPU/RAM/GPU at idle and paused for at least a minute. Report
       both wallpaper processes and the settings process separately.
 
-Autorun and additional-monitor rendering are outside this release. DX12 can be
+The user reported the existing settings/tray checklist was completed and appeared
+correct on 2026-10-10; emoji and settings shutdown fixes were also confirmed.
+The following checks cover the new 0.3.0 behavior. Additional-monitor rendering
+remains deferred. DX12 can be
 compared with --wgpu; the previous flashes occurred with this path on an RTX 3060.
+
+## Focused 0.3.0 checks
+
+- [ ] Settings / System: enable Start with Windows. Quit and sign out/in (or
+      reboot). Wallpaper starts behind icons, without a console, duplicate
+      renderer or settings window, and uses the saved config. Repeat disable and
+      sign-in: it stays disabled. This switch applies immediately without Save.
+- [ ] If using an EXE/config path with spaces or Cyrillic, repeat the sign-in test.
+      After moving the EXE, update the startup location in settings. Keep the
+      previous location until the new startup entry is registered.
+- [ ] Quality and animation: compare High quality text on/off at 100%, 125% and
+      150% scale. Save each comparison for wallpaper. Check Latin/CJK/digits and
+      emoji edges; custom font sizes and the preview still fit.
+- [ ] Compare Smooth (30 FPS), Smooth (60 FPS) and Off. Bars move between clock
+      ticks in smooth modes; off changes once per second. At second 59 -> 00,
+      the minute bar returns over one second. Digits change once per second.
+- [ ] Pause in the middle of a transition: bars and digits stay fixed. Resume
+      displays current time without fast catch-up. Repeat after sleep/wake.
+- [ ] Change resolution/DPI, connect/disconnect a display and change the primary
+      display. Only the primary display has wallpaper; bounds and scaling follow
+      it. No foreground flash, lost icons or extra renderer persists. Keep app.log
+      if recovery fails. Recheck Explorer restart with Settings open.
+- [ ] Compare resource use with desktop visible, a maximized foreground app,
+      animation off, 30/60 FPS, paused, and Settings open. Watch recovery when
+      minimizing the foreground app. Use the measurement procedure below.
+
+## Resource measurement
+
+Close the previous build before measuring. Start the downloaded EXE; open
+PowerShell in the extracted artifact directory and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\docs\Measure-Performance.ps1 -DurationSeconds 120 -Label visible-30fps -OutputPath .\visible-30fps.csv
+```
+
+Repeat with separate labels/files for animation off, 60 FPS, paused, maximized
+foreground application and Settings open. Keep the same resolution/DPI, image,
+font and labels; close Settings for wallpaper-only comparisons. The script sums
+all application processes, normalizes CPU across logical processors and records
+working-set/private RAM plus the busiest GPU engine. An empty GPU column means
+counters are unavailable, not zero use; record Task Manager GPU figures instead.
+Check working-set/private memory again after 15–30 minutes for sustained growth.
+The helper does not change system settings or install anything. Its script-specific
+execution-policy override applies to this invocation only.

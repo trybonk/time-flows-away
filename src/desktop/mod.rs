@@ -5,7 +5,7 @@ pub mod supervisor;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{Desktop, wallpaper_viewport};
+pub use windows::{Desktop, shell_ready, wallpaper_viewport};
 #[cfg(not(windows))]
 pub struct Desktop;
 #[cfg(not(windows))]

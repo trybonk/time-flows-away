@@ -7,6 +7,7 @@ pub struct Assets {
     font_path: Option<String>,
     pub texture: Option<egui::TextureHandle>,
     pub text: time_flows_away_native::wallpaper::text::TextRenderer,
+    pub animation: time_flows_away_native::wallpaper::animation::ProgressAnimation,
     image_error: Option<String>,
     font_error: Option<String>,
 }
@@ -17,11 +18,13 @@ impl Assets {
             font_path: None,
             texture: None,
             text: Default::default(),
+            animation: Default::default(),
             image_error: None,
             font_error: None,
         }
     }
     pub fn sync(&mut self, ctx: &egui::Context, c: &Config) {
+        self.text.high_quality = c.high_quality_text;
         if self.image_path.as_ref() != Some(&c.background_image) {
             self.image_path = Some(c.background_image.clone());
             self.texture = None;

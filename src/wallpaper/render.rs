@@ -1,4 +1,3 @@
-use super::clock::Clock;
 use crate::config::{Alignment, Config};
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2};
@@ -11,11 +10,20 @@ pub fn draw(
     config: &Config,
     image: Option<&egui::TextureHandle>,
     text_renderer: &mut super::text::TextRenderer,
+    progress: [f32; 5],
 ) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ctx, |ui| {
-            draw_in(ui, ui.max_rect(), now, config, image, text_renderer);
+            draw_in(
+                ui,
+                ui.max_rect(),
+                now,
+                config,
+                image,
+                text_renderer,
+                progress,
+            );
         });
 }
 pub fn draw_in(
@@ -25,6 +33,7 @@ pub fn draw_in(
     c: &Config,
     image: Option<&egui::TextureHandle>,
     text_renderer: &mut super::text::TextRenderer,
+    progress: [f32; 5],
 ) {
     let painter = ui.painter().with_clip_rect(bounds);
     painter.rect_filled(bounds, 0.0, color(c.background));
@@ -43,7 +52,6 @@ pub fn draw_in(
         };
         painter.image(image.id(), bounds, uv, Color32::WHITE);
     }
-    let clock = Clock::at(now);
     let mut date = now.format(&c.date_format).to_string();
     if c.show_weekday {
         date.push_str(&now.format(" %A").to_string());
@@ -146,7 +154,7 @@ pub fn draw_in(
                     painter.rect_filled(
                         Rect::from_min_size(
                             rect.min,
-                            Vec2::new(rect.width() * clock.progress[index], rect.height()),
+                            Vec2::new(rect.width() * progress[index], rect.height()),
                         ),
                         0.0,
                         color,

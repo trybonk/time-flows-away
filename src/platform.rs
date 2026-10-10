@@ -219,3 +219,5 @@ mod tests {
         assert!(lifetime.finished());
     }
 }
+#[cfg(windows)]
+pub mod autostart;

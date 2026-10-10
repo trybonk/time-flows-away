@@ -11,6 +11,13 @@ pub fn run(options: &crate::options::Options) -> std::io::Result<ExitStatus> {
     let mut options = options.clone();
     options.wallpaper_owner = Some(std::process::id());
     loop {
+        if !super::shell_ready() {
+            crate::diagnostics::event("Waiting for Explorer desktop before renderer startup");
+            let started = std::time::Instant::now();
+            while !super::shell_ready() && started.elapsed() < Duration::from_secs(30) {
+                thread::sleep(Duration::from_millis(500));
+            }
+        }
         let mut worker = Command::new(&executable);
         worker.arg("--wallpaper-worker");
         worker.args(options.child_args());

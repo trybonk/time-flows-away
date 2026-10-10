@@ -2,6 +2,7 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
     ptr::null_mut,
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -11,7 +12,7 @@ use windows_sys::Win32::{
         ScreenToClient,
     },
     UI::{
-        HiDpi::GetDpiForSystem,
+        HiDpi::{GetDpiForMonitor, GetDpiForSystem, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT},
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::*,
@@ -19,6 +20,61 @@ use windows_sys::Win32::{
 };
 
 const SUBCLASS_ID: usize = 1;
+static DISPLAY_DIRTY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PrimaryDisplay {
+    monitor: usize,
+    rect: [i32; 4],
+    dpi: u32,
+}
+impl PrimaryDisplay {
+    fn read() -> Result<Self, String> {
+        unsafe {
+            let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            check(GetMonitorInfoW(monitor, &mut info), "GetMonitorInfoW")?;
+            let mut x = 0;
+            let mut y = 0;
+            if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y) < 0 {
+                x = GetDpiForSystem();
+            }
+            let r = info.rcMonitor;
+            Ok(Self {
+                monitor: monitor as usize,
+                rect: [r.left, r.top, r.right, r.bottom],
+                dpi: x.max(96),
+            })
+        }
+    }
+}
+pub fn shell_ready() -> bool {
+    unsafe extern "system" fn find_icons(hwnd: HWND, data: LPARAM) -> i32 {
+        unsafe {
+            if !FindWindowExW(
+                hwnd,
+                null_mut(),
+                wide("SHELLDLL_DefView").as_ptr(),
+                std::ptr::null(),
+            )
+            .is_null()
+            {
+                *(data as *mut bool) = true;
+                return 0;
+            }
+        }
+        1
+    }
+    unsafe {
+        if FindWindowW(wide("Progman").as_ptr(), std::ptr::null()).is_null() {
+            return false;
+        }
+        let mut ready = false;
+        EnumWindows(Some(find_icons), &mut ready as *mut bool as LPARAM);
+        ready
+    }
+}
 fn child_style(bits: u32) -> u32 {
     (bits & !(WS_OVERLAPPEDWINDOW | WS_POPUP)) | WS_CHILD
 }
@@ -41,6 +97,15 @@ unsafe extern "system" fn child_window_proc(
     raised: usize,
 ) -> LRESULT {
     unsafe {
+        if matches!(
+            message,
+            WM_DISPLAYCHANGE | WM_DPICHANGED | WM_DPICHANGED_AFTERPARENT | WM_POWERBROADCAST
+        ) {
+            DISPLAY_DIRTY.store(true, Ordering::Relaxed);
+            crate::diagnostics::event(&format!(
+                "Desktop event: message={message:#x} detail={wparam:#x}"
+            ));
+        }
         if message == WM_STYLECHANGING && lparam != 0 {
             let styles = &mut *(lparam as *mut STYLESTRUCT);
             let requested = styles.styleNew;
@@ -266,6 +331,9 @@ pub struct Desktop {
     original_rect: RECT,
     layer: Layer,
     last_probe: Instant,
+    dpi: f32,
+    repair_failed_since: Option<Instant>,
+    animation_visible: bool,
     closing: bool,
     subclassed: bool,
     monitor: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
@@ -289,6 +357,9 @@ impl Desktop {
                 original_rect: rect,
                 layer,
                 last_probe: Instant::now(),
+                dpi: PrimaryDisplay::read()?.dpi as f32 / 96.0,
+                repair_failed_since: None,
+                animation_visible: true,
                 monitor: None,
                 closing: false,
                 subclassed: false,
@@ -297,10 +368,13 @@ impl Desktop {
             if std::env::args().any(|arg| arg == "--wallpaper-worker") {
                 let (stop, receiver) = std::sync::mpsc::channel();
                 let handle = hwnd as usize;
+                let ctx = cc.egui_ctx.clone();
                 // Needed only because an externally destroyed HWND receives no repaint.
                 let monitor = std::thread::Builder::new()
                     .name("shell-lifetime".into())
                     .spawn(move || {
+                        let mut display = PrimaryDisplay::read().ok();
+                        let mut last = Instant::now();
                         while matches!(
                             receiver.recv_timeout(Duration::from_secs(1)),
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
@@ -310,6 +384,13 @@ impl Desktop {
                                 // remaining GPU/process resources; the supervisor owns restart.
                                 std::process::exit(super::supervisor::SHELL_LOST);
                             }
+                            let current = PrimaryDisplay::read().ok();
+                            if current != display || last.elapsed() > Duration::from_secs(3) {
+                                display = current;
+                                DISPLAY_DIRTY.store(true, Ordering::Relaxed);
+                                ctx.request_repaint();
+                            }
+                            last = Instant::now();
                         }
                     })
                     .map_err(|error| format!("Shell lifetime monitor: {error}"))?;
@@ -453,10 +534,39 @@ impl Desktop {
         }
     }
     pub fn maintain(&mut self) -> Result<(), String> {
-        if self.last_probe.elapsed() < Duration::from_secs(2) {
+        if !DISPLAY_DIRTY.swap(false, Ordering::Relaxed)
+            && self.last_probe.elapsed() < Duration::from_secs(2)
+        {
             return Ok(());
         }
         self.last_probe = Instant::now();
+        match self.repair() {
+            Ok(()) => {
+                if self.repair_failed_since.take().is_some() {
+                    crate::diagnostics::event("Desktop recovery completed");
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let since = self.repair_failed_since.get_or_insert_with(|| {
+                    crate::diagnostics::event(&format!("Desktop repair pending: {error}"));
+                    Instant::now()
+                });
+                if since.elapsed() < Duration::from_secs(15) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+    pub fn pixels_per_point(&self) -> f32 {
+        self.dpi
+    }
+    pub fn animation_visible(&self) -> bool {
+        self.animation_visible
+    }
+    fn repair(&mut self) -> Result<(), String> {
         unsafe {
             if !owns(self.hwnd) {
                 return Err("Explorer destroyed the child HWND; restart the application".into());
@@ -465,6 +575,11 @@ impl Desktop {
                 || IsWindow(self.layer.icons) == 0
                 || GetParent(self.hwnd) != self.layer.parent
             {
+                if std::env::args().any(|arg| arg == "--wallpaper-worker") {
+                    // Recreate only our renderer. Do not restore a visible
+                    // top-level window while Explorer is changing its layers.
+                    std::process::exit(super::supervisor::SHELL_LOST);
+                }
                 // Detach before discovery; never attach to an invalid/reused handle blindly.
                 self.restore(false)?;
                 self.layer = discover()?;
@@ -474,6 +589,40 @@ impl Desktop {
                 ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
             } else {
                 self.position(false)?;
+            }
+            let dpi = PrimaryDisplay::read()?.dpi as f32 / 96.0;
+            let foreground = GetForegroundWindow();
+            self.animation_visible = true;
+            if foreground != self.hwnd
+                && foreground != self.layer.parent
+                && foreground != self.layer.icons
+                && !foreground.is_null()
+                && IsWindowVisible(foreground) != 0
+                && IsIconic(foreground) == 0
+            {
+                let mut bounds: RECT = std::mem::zeroed();
+                let mut info: MONITORINFO = std::mem::zeroed();
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if GetWindowRect(foreground, &mut bounds) != 0
+                    && GetMonitorInfoW(
+                        MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+                        &mut info,
+                    ) != 0
+                {
+                    let work = info.rcWork;
+                    self.animation_visible = !(bounds.left <= work.left
+                        && bounds.top <= work.top
+                        && bounds.right >= work.right
+                        && bounds.bottom >= work.bottom);
+                }
+            }
+            if (dpi - self.dpi).abs() > 0.01 {
+                crate::diagnostics::event(&format!(
+                    "Desktop DPI changed: {} -> {}",
+                    self.dpi * 96.0,
+                    dpi * 96.0
+                ));
+                self.dpi = dpi;
             }
         }
         Ok(())

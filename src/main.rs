@@ -127,6 +127,13 @@ fn run() -> eframe::Result {
         "Time Flows Away",
         options,
         Box::new(move |cc| {
+            // Fractional progress widths and supersampled text must not be
+            // snapped back to whole pixels before rasterization.
+            cc.egui_ctx.tessellation_options_mut(|options| {
+                options.feathering = true;
+                options.round_rects_to_pixels = false;
+                options.round_text_to_pixels = false;
+            });
             app::log_adapter(cc);
             if arguments.settings {
                 Ok(Box::new(settings::SettingsApp::new(cc, arguments)))

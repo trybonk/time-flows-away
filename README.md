@@ -51,6 +51,8 @@ the preview until you save. Settings need not be open for wallpaper to run.
   Emoji keep their native colors when the text color or font changes. Input
   fields use monochrome system glyphs.
 - Five progress colors, bar width/height/gap, horizontal/vertical alignment and offsets.
+- High quality text and smooth progress bars at 30 FPS (default), optional 60 FPS,
+  or animation off for lower resource use. Clock digits update once per second.
 - Date/time formats, 12/24-hour presets and weekday.
 - Solid or PNG/JPEG background, panel color and opacity.
 - Countdown to a future local date/time or elapsed time since a past one;
@@ -70,6 +72,12 @@ Invalid settings edits keep the last valid configuration and are logged; the fil
 is preserved for correction. `--config "C:\path\config.toml"` selects another file
 and is forwarded to settings and restarted workers. Settings and wallpaper each
 allow one instance per Windows session; preview windows are independent.
+
+In **System**, enable **Start with Windows** to start at sign-in. This switch
+applies immediately, without Save or administrator rights. Keep the EXE at the
+registered location; after moving it, use **Use current application location**.
+The startup entry preserves the selected renderer and settings-file path.
+Disabling it removes the application's startup entry without closing the wallpaper.
 
 ## Build from source
 
@@ -103,9 +111,10 @@ legacy/wallpaper-engine/   Preserved original web wallpaper and README
 LICENSE / NOTICE           Apache-2.0 license and original-project credits
 ```
 
-Primary-monitor rendering and Explorer recovery are implemented. Autorun,
-multi-monitor selection and installation/release packaging are planned next.
-No administrator privileges or automatic startup registration are used.
+Primary-monitor rendering, Explorer recovery, display/DPI change detection and
+opt-in autorun are implemented. Additional-monitor rendering and installation/
+release packaging remain planned. Startup registration is disabled until enabled
+in settings. No administrator privileges are required.
 Read [development details](docs/DEVELOPMENT.md) and the
 [settings and tray checklist](docs/SETTINGS-CHECKLIST.md).
 

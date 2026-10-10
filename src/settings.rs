@@ -1,9 +1,9 @@
 use crate::{assets::Assets, options::Options};
-use chrono::{Local, Timelike};
+use chrono::Local;
 use eframe::egui;
 use time_flows_away_native::{
     config::{self, Alignment, Config, CountdownMode},
-    wallpaper::{clock::next_tick, render},
+    wallpaper::{animation::repaint_delay, render},
 };
 pub struct SettingsApp {
     options: Options,
@@ -14,6 +14,8 @@ pub struct SettingsApp {
     message: Option<String>,
     #[cfg(windows)]
     lifetime: Option<crate::platform::SettingsLifetime>,
+    #[cfg(windows)]
+    startup: Result<crate::platform::autostart::Status, String>,
 }
 impl SettingsApp {
     pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
@@ -21,6 +23,8 @@ impl SettingsApp {
         let mut assets = Assets::new();
         assets.sync(&cc.egui_ctx, &store.current);
         Self {
+            #[cfg(windows)]
+            startup: crate::platform::autostart::status(&options),
             #[cfg(windows)]
             lifetime: options
                 .wallpaper_owner
@@ -49,6 +53,7 @@ impl SettingsApp {
 }
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        let frame_started = std::time::Instant::now();
         let now = Local::now();
         #[cfg(windows)]
         if self
@@ -108,6 +113,24 @@ impl eframe::App for SettingsApp {
             .width_range(300.0..=600.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    #[cfg(windows)]
+                    egui::CollapsingHeader::new("System").show(ui, |ui| {
+                        if let Ok(status) = &self.startup {
+                            let mut enabled=status.enabled;
+                            let changed=ui.checkbox(&mut enabled, "Start with Windows").changed();
+                            let refresh=status.enabled && !status.current && ui.button("Use current application location").clicked();
+                            if changed || refresh {
+                                match crate::platform::autostart::set(enabled, &self.options) {
+                                    Ok(()) => {
+                                        self.startup=crate::platform::autostart::status(&self.options);
+                                        self.message=Some("Startup preference updated.".into());
+                                    }
+                                    Err(error) => self.message=Some(format!("Cannot change startup: {error}")),
+                                }
+                            }
+                        } else if let Err(error)=&self.startup {ui.colored_label(egui::Color32::LIGHT_RED,error);}
+                        ui.small("Applied immediately. Keep the EXE in this location. Windows startup settings can also disable it.");
+                    });
                     let c = &mut self.draft;
                     egui::CollapsingHeader::new("Text and font")
                         .default_open(true)
@@ -134,6 +157,17 @@ impl eframe::App for SettingsApp {
                         ui.add(egui::Slider::new(&mut c.bar_width, 50.0..=2000.0).text("Width"));
                         ui.add(egui::Slider::new(&mut c.bar_height, 1.0..=50.0).text("Height"));
                         ui.add(egui::Slider::new(&mut c.bar_gap, 0.0..=50.0).text("Gap"));
+                    });
+                    egui::CollapsingHeader::new("Quality and animation").show(ui, |ui| {
+                        ui.checkbox(&mut c.high_quality_text, "High quality text");
+                        egui::ComboBox::from_label("Animation").selected_text(match c.animation_fps {
+                            0 => "Off (low power)", 60 => "Smooth (60 FPS)", _ => "Smooth (30 FPS)",
+                        }).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut c.animation_fps, 0, "Off (low power)");
+                            ui.selectable_value(&mut c.animation_fps, 30, "Smooth (30 FPS)");
+                            ui.selectable_value(&mut c.animation_fps, 60, "Smooth (60 FPS)");
+                        });
+                        ui.small("Smooth bars use more GPU/CPU. Clock digits change once per second.");
                     });
                     egui::CollapsingHeader::new("Position").show(ui, |ui| {
                         alignment(ui, "Horizontal", &mut c.horizontal, ["Left", "Center", "Right"]);
@@ -212,6 +246,12 @@ impl eframe::App for SettingsApp {
                     &self.draft,
                     self.assets.texture.as_ref(),
                     &mut self.assets.text,
+                    self.assets.animation.sample(
+                        now.naive_local(),
+                        frame_started,
+                        self.draft.animation_fps > 0,
+                        false,
+                    ),
                 );
             } else {
                 ui.painter()
@@ -219,7 +259,10 @@ impl eframe::App for SettingsApp {
             }
             ui.label("Preview follows your edits. Save when ready to update the wallpaper.");
         });
-        ctx.request_repaint_after(next_tick(now.nanosecond()));
+        ctx.request_repaint_after(
+            repaint_delay(now.naive_local(), self.draft.animation_fps, false)
+                .saturating_sub(frame_started.elapsed()),
+        );
     }
 }
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String) {
