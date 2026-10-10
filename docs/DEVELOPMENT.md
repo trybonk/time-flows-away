@@ -1,13 +1,13 @@
 # Time Flows Away — native Windows MVP
 
 Rust edition 2024, egui/eframe + wgpu, no browser and no Wallpaper Engine.
-Licensed under the root Apache-2.0 LICENSE; see NOTICE for attribution.
-The original `../src/` files remain the implementation reference.
+Licensed under the root Apache-2.0 LICENSE; see ../NOTICE for attribution.
+The original `../legacy/wallpaper-engine/src/` files remain the implementation reference.
 
 ## Build and run on Windows 11 x64
 
 Install Rust with the MSVC toolchain and Visual Studio Build Tools (Desktop
-Development with C++, including a Windows SDK). From this directory:
+Development with C++, including a Windows SDK). From the repository root:
 
 ```powershell
 cargo fmt --check
@@ -27,11 +27,12 @@ ten seconds; a new error kind is recorded immediately. Preview is a normal windo
 **Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Use the chord for orderly detachment; closing a terminal is no longer necessary.
 No administrator privileges are required.
 
-The GitHub Actions workflow `Native Windows MVP` runs formatting, Clippy, tests,
+The GitHub Actions workflow `Windows build` runs formatting, Clippy, tests,
 and a release build on Windows for pull requests, pushes to the feature branch
 or master, and manual dispatch. Download `time-flows-away-windows-x64` from the
-run's artifacts and extract the executable. The workflow must first be pushed
-before GitHub can run it. CI compilation does **not** test desktop embedding.
+run's artifacts and extract the executable. CI compilation does **not** test
+desktop embedding. Commands run from the repository root; binaries are under
+`target/release/`, and the CI artifact includes the `docs/` directory.
 
 ## Architecture and safety
 

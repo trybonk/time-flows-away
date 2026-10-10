@@ -91,3 +91,11 @@ window-style/layer requests and visibility changes with millisecond timestamps.
 The existing surface-error handling policy is preserved. The two visual issues
 remain open until this build is retested on Windows; this is not a verified
 compositor fix.
+
+The user's diagnostic log at 2026-10-10 16:17 identifies an NVIDIA GeForce
+RTX 3060, DX12 backend, driver 32.0.16.1664, and Bgra8Unorm. Initial visibility
+and two style guards were recorded within 16 ms of attachment; the applied
+styles retained child/nonactivating/layered behavior. The user reports that
+flashes remain. No surface errors or subsequent placement events are present
+in the supplied excerpt. Matching clear colors did not resolve the reported
+flash, and this log does not establish a specific driver/compositor fault.
