@@ -218,3 +218,27 @@ PowerShell measurement helper using its own pwsh process; this checks the helper
 not wallpaper resource use. Windows desktop composition, sign-in autorun,
 hardware GPU load and quality comparisons require the focused PC checks in
 SETTINGS-CHECKLIST.md.
+
+Current-instance checks passed with the pinned toolchain:
+
+- Linux and Windows GNU all-target Clippy; 20 Linux tests, no failures/ignored tests.
+- Linux and Windows GNU release builds; Windows executable is GUI-subsystem x64
+  and imports system DLLs without an extra MinGW runtime dependency.
+- Actual release OpenGL settings edits/Save, pause/resume, last-valid hot reload,
+  image/font/timer rendering, colored emoji, and OpenGL/Vulkan preview shutdown.
+- Actual OpenGL animation check found 17 changing bar frames while clock digits
+  stayed unchanged. Pause froze bars/digits; animation off had 15 stable frames;
+  quality on/off changed rasterization of the same paused text.
+- Four one-minute software-OpenGL measurements covered preview off/30/60 FPS and
+  Settings at 30 FPS. Post-warmup process RSS remained approximately 140–145 MiB
+  without sustained growth in those intervals. The software driver consumed much
+  more CPU in smooth modes; these readings cannot predict RTX 3060 CPU/GPU load.
+- The PowerShell helper's parsing, CPU/RAM CSV sampling and unavailable-GPU output
+  were checked using official, checksum-verified PowerShell 7.5.4 in Linux.
+
+Windows MSVC formatting/Clippy/tests passed in run 38074114699; that run stopped
+before release packaging because cold GPU-counter discovery consumed the short
+helper smoke interval. The corrected CI smoke measures CPU/RAM with SkipGpu;
+ordinary PC measurements retain GPU sampling. Missing counters and initial CPU
+samples are omitted from averages instead of being reported as zero use.
+The follow-up Windows run supplies release packaging results.

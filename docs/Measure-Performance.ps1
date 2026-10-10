@@ -3,7 +3,8 @@ param(
     [ValidateRange(1, 30)][int]$IntervalSeconds = 2,
     [string]$Label = 'visible-30fps',
     [string]$ProcessName = 'time-flows-away-native',
-    [string]$OutputPath = '.\performance.csv'
+    [string]$OutputPath = '.\performance.csv',
+    [switch]$SkipGpu
 )
 $ErrorActionPreference = 'Stop'
 $rows = [System.Collections.Generic.List[object]]::new()
@@ -11,7 +12,7 @@ $previous = @{}
 $previousAt = [DateTimeOffset]::Now
 $logicalProcessors = [Environment]::ProcessorCount
 $until = $previousAt.AddSeconds($DurationSeconds)
-$gpuAvailable = $true
+$gpuAvailable = -not $SkipGpu
 while ([DateTimeOffset]::Now -lt $until) {
     $now = [DateTimeOffset]::Now
     $processes = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
@@ -59,5 +60,10 @@ if (($rows | Measure-Object -Property Processes -Maximum).Maximum -eq 0) {
     throw "No running process named $ProcessName was found. Start the app before measuring."
 }
 $rows | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
-$rows | Measure-Object CPUPercent,WorkingSetMiB,PrivateMiB,GPUBusiestEnginePercent -Average -Maximum | Format-Table -AutoSize
+$summary = foreach ($property in 'CPUPercent','WorkingSetMiB','PrivateMiB','GPUBusiestEnginePercent') {
+    # Ignore unavailable/initial samples instead of treating them as zero use.
+    $available = @($rows | Where-Object { $null -ne $_.$property })
+    if ($available.Count -gt 0) { $available | Measure-Object -Property $property -Average -Maximum }
+}
+$summary | Format-Table -AutoSize
 Write-Host "Saved: $OutputPath (CPU normalized across $logicalProcessors logical processors; empty GPU means unavailable)."

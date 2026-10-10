@@ -39,7 +39,9 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD/docs/Measure-Performance.ps1", [ref]$tokens, [ref]$parseErrors) | Out-Null
           if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
           $output = Join-Path $env:RUNNER_TEMP 'performance-helper.csv'
-          ./docs/Measure-Performance.ps1 -DurationSeconds 3 -IntervalSeconds 1 -ProcessName pwsh -Label helper-smoke -OutputPath $output
+          # Hosted runners have no wallpaper GPU; skip cold GPU-counter discovery
+          # so it cannot consume the short CPU/RAM measurement interval.
+          ./docs/Measure-Performance.ps1 -DurationSeconds 4 -IntervalSeconds 1 -ProcessName pwsh -SkipGpu -Label helper-smoke -OutputPath $output
           $samples = @(Import-Csv $output)
           if ($samples.Count -lt 2 -or [double]$samples[-1].WorkingSetMiB -le 0 -or $samples[-1].CPUPercent -eq '') {
             throw 'Performance helper did not collect process samples.'
