@@ -67,6 +67,10 @@ impl WallpaperApp {
         }
     }
     fn close(&mut self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        if self.options.worker {
+            crate::platform::close_settings();
+        }
         if let Some(desktop) = self.desktop.as_mut() {
             desktop.prepare_close();
         }
@@ -122,7 +126,10 @@ impl eframe::App for WallpaperApp {
                 match command {
                     crate::tray::Command::Settings => self.open_settings(),
                     crate::tray::Command::TogglePause => self.pause(now.naive_local()),
-                    crate::tray::Command::Quit => self.close(ctx),
+                    crate::tray::Command::Quit => {
+                        self.close(ctx);
+                        return;
+                    }
                 }
             }
         }
@@ -169,6 +176,7 @@ impl eframe::App for WallpaperApp {
             self.paused.unwrap_or(now.naive_local()),
             &self.store.current,
             self.assets.texture.as_ref(),
+            &mut self.assets.text,
         );
         if let Some(status) = &self.status {
             egui::Area::new(egui::Id::new("status"))

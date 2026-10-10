@@ -10,11 +10,12 @@ pub fn draw(
     now: NaiveDateTime,
     config: &Config,
     image: Option<&egui::TextureHandle>,
+    text_renderer: &mut super::text::TextRenderer,
 ) {
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ctx, |ui| {
-            draw_in(ui, ui.max_rect(), now, config, image);
+            draw_in(ui, ui.max_rect(), now, config, image, text_renderer);
         });
 }
 pub fn draw_in(
@@ -23,6 +24,7 @@ pub fn draw_in(
     now: NaiveDateTime,
     c: &Config,
     image: Option<&egui::TextureHandle>,
+    text_renderer: &mut super::text::TextRenderer,
 ) {
     let painter = ui.painter().with_clip_rect(bounds);
     painter.rect_filled(bounds, 0.0, color(c.background));
@@ -71,6 +73,10 @@ pub fn draw_in(
     if let Some(text) = c.timer_text(now) {
         rows.extend([Row::Gap(18.0), Row::Text(text, c.countdown_size)]);
     }
+    text_renderer.retain_used(rows.iter().filter_map(|row| match row {
+        Row::Text(text, _) => Some(text.as_str()),
+        _ => None,
+    }));
     let font = |size| FontId::new(size, FontFamily::Name("wallpaper".into()));
     let height = |row: &Row| match row {
         Row::Text(_, size) => *size,
@@ -82,10 +88,7 @@ pub fn draw_in(
         .iter()
         .map(|row| match row {
             Row::Text(text, size) => {
-                painter
-                    .layout_no_wrap(text.clone(), font(*size), color(c.text_color))
-                    .size()
-                    .x
+                text_renderer.width(&painter, text, font(*size), color(c.text_color))
             }
             Row::Bars(..) => c.bar_width,
             Row::Gap(_) => 0.0,
@@ -121,9 +124,9 @@ pub fn draw_in(
     for row in &rows {
         match row {
             Row::Text(text, size) => {
-                painter.text(
+                text_renderer.draw_centered(
+                    &painter,
                     Pos2::new(center_x, y + size * scale * 0.5),
-                    egui::Align2::CENTER_CENTER,
                     text,
                     font(size * scale),
                     color(c.text_color),

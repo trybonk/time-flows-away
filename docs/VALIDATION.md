@@ -160,9 +160,35 @@ This avoids treating a title/PID or a fixed shader-compilation delay as readines
 Config polling now requests its own repaint deadline, avoiding an extra delay
 from rounding the two-second check to a one-second clock tick.
 
-These are Linux GUI checks and Windows cross-compilation. Windows MSVC CI must
-complete on the new feature branch. Windows tray/menu callbacks, native file
+These are Linux GUI checks and Windows cross-compilation. Windows MSVC CI passed
+in [run 38060606087](https://github.com/trybonk/time-flows-away/actions/runs/38060606087).
+Windows tray/menu callbacks, native file
 picker, duplicate-launch guards, OpenGL desktop layering, Explorer recovery with
 a tray, and performance of this release require the user's PC checks in
 SETTINGS-CHECKLIST.md. The older Windows report is useful baseline evidence;
 it does not certify the settings/tray build.
+
+## Emoji and settings shutdown fixes — 0.2.1
+
+The user reported missing 🤫, monochrome 🎣, and a settings window remaining
+after tray Quit. Wallpaper/live preview now paint native color emoji, and the
+settings process follows the persistent wallpaper supervisor. Normal Quit also
+requests closure of the verified settings HWND. Explorer recovery leaves the
+supervisor alive and keeps settings open.
+
+Checks before submission:
+
+- Formatting and all-target Clippy passed for Linux and Windows GNU.
+- 18 Linux tests passed, including emoji sequences/text presentation, transparent
+  image cropping, invalid internal owner arguments and child argument forwarding.
+- Actual OpenGL/Xvfb settings and wallpaper previews displayed colored 🤫 and 🎣
+  alongside purple ordinary text. Header contained 14,576 face-colored pixels;
+  footer contained 2,249 fishing-blue pixels. This used Linux's installed Noto
+  Color Emoji font and the new shared layout/texture code, not Windows glyphs.
+
+Windows CI additionally exercises native DirectWrite/Direct2D/WIC rendering of
+🤫, 🎣, 👍🏽 and 👩‍💻, asserting colored pixels and transparent background, and
+checks settings lifetime handles against a live, exited and missing owner.
+The build run provides the native test/release result. Windows tray closure with
+Settings open/minimized and preservation across Explorer restart still require
+the focused checks in SETTINGS-CHECKLIST.md on the user's PC.

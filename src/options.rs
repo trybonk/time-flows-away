@@ -4,6 +4,7 @@ pub struct Options {
     pub preview: bool,
     pub settings: bool,
     pub worker: bool,
+    pub wallpaper_owner: Option<u32>,
     pub opengl: bool,
     pub config: PathBuf,
 }
@@ -13,6 +14,7 @@ impl Options {
             preview: false,
             settings: false,
             worker: false,
+            wallpaper_owner: None,
             opengl: cfg!(windows),
             config: time_flows_away_native::config::default_path(),
         };
@@ -23,6 +25,14 @@ impl Options {
                 Some("--preview") => result.preview = true,
                 Some("--settings") => result.settings = true,
                 Some("--wallpaper-worker") => result.worker = true,
+                Some("--wallpaper-owner") => {
+                    result.wallpaper_owner = Some(
+                        args.next()
+                            .and_then(|value| value.to_str().and_then(|s| s.parse::<u32>().ok()))
+                            .filter(|pid| *pid > 0)
+                            .ok_or("--wallpaper-owner requires a process ID")?,
+                    );
+                }
                 Some("--opengl" | "--wgpu") => {
                     let glow = arg == "--opengl";
                     if renderer.is_some_and(|previous| previous != glow) {
@@ -50,11 +60,15 @@ impl Options {
     }
     #[cfg(any(windows, test))]
     pub fn child_args(&self) -> Vec<OsString> {
-        vec![
+        let mut args = vec![
             if self.opengl { "--opengl" } else { "--wgpu" }.into(),
             "--config".into(),
             self.config.clone().into_os_string(),
-        ]
+        ];
+        if let Some(pid) = self.wallpaper_owner {
+            args.extend(["--wallpaper-owner".into(), pid.to_string().into()]);
+        }
+        args
     }
 }
 #[cfg(test)]
@@ -71,6 +85,9 @@ mod tests {
             &["--config", "--preview"],
             &["--settings", "--preview"],
             &["--unknown"],
+            &["--wallpaper-owner"],
+            &["--wallpaper-owner", "0"],
+            &["--wallpaper-owner", "not-a-pid"],
         ] {
             assert!(parse(args).is_err());
         }
@@ -82,11 +99,14 @@ mod tests {
             "--opengl",
             "--config",
             "settings with spaces.toml",
+            "--wallpaper-owner",
+            "1234",
         ])
         .unwrap();
         let child = Options::parse(original.child_args()).unwrap();
         assert!(child.opengl);
         assert_eq!(child.config, original.config);
+        assert_eq!(child.wallpaper_owner, Some(1234));
         assert!(!parse(&["--wgpu"]).unwrap().opengl);
     }
 }

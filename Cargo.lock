@@ -2816,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "time-flows-away-native"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "eframe",
@@ -2826,7 +2826,10 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tray-icon",
  "ttf-parser",
+ "unicode-properties",
+ "unicode-segmentation",
  "wgpu",
+ "windows",
  "windows-sys 0.61.2",
 ]
 
@@ -3012,6 +3015,12 @@ name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "unicode-properties"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
 name = "unicode-segmentation"

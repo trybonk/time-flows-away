@@ -127,6 +127,13 @@ same color as the page, so its rounded outline is invisible.
 Windows Microsoft JhengHei bold is loaded from the system once, falling back to
 JhengHei/YaHei then egui fonts; Linux preview uses a local Noto Sans CJK font.
 Missing CJK fonts may show missing glyphs.
+Color emoji use Segoe UI Emoji through DirectWrite and a software Direct2D/WIC
+bitmap; this creates no helper HWND or GPU surface. Grapheme segmentation keeps
+variation selectors, modifiers and ZWJ sequences together. Textures (including
+failed glyphs) are cached, bounded and removed when no longer used. Wallpaper
+and live preview share this renderer. Settings input fields use the Segoe outline
+fallback. Linux preview uses installed Noto Color Emoji bitmaps for individual
+emoji; full Windows sequence shaping must be tested on Windows.
 Fonts, kerning and egui rasterization differ from browser rendering. egui logical
 points scale with display DPI; physical measurements need checking on Windows.
 Both the GPU clear color and the painted panel use the same opaque #161616
@@ -145,6 +152,11 @@ multi-monitor rendering is implemented. Pausing freezes the sampled clock while
 maintenance/config checks continue every two seconds. Pause is temporary and
 resets after a renderer restart. Normal running requests one repaint per second;
 interactive egui events can request additional paints.
+Settings launched from the tray track an opened handle to the persistent
+supervisor, so they survive renderer recovery but close when the application
+exits. Quit also posts WM_CLOSE to the settings HWND after verifying its executable
+path, including a window started with --settings. Standalone settings continue
+working when no wallpaper was started. No process termination is used.
 
 ## Windows manual acceptance checklist (not run in Linux)
 

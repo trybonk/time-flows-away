@@ -12,6 +12,8 @@ pub struct SettingsApp {
     saved: Config,
     assets: Assets,
     message: Option<String>,
+    #[cfg(windows)]
+    lifetime: Option<crate::platform::SettingsLifetime>,
 }
 impl SettingsApp {
     pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
@@ -19,6 +21,10 @@ impl SettingsApp {
         let mut assets = Assets::new();
         assets.sync(&cc.egui_ctx, &store.current);
         Self {
+            #[cfg(windows)]
+            lifetime: options
+                .wallpaper_owner
+                .map(crate::platform::SettingsLifetime::attach),
             owner: crate::platform::owner(cc),
             options,
             draft: store.current.clone(),
@@ -44,6 +50,15 @@ impl SettingsApp {
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let now = Local::now();
+        #[cfg(windows)]
+        if self
+            .lifetime
+            .as_ref()
+            .is_some_and(|lifetime| lifetime.finished())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.assets.sync(ctx, &self.draft);
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
             self.save();
@@ -196,6 +211,7 @@ impl eframe::App for SettingsApp {
                     now.naive_local(),
                     &self.draft,
                     self.assets.texture.as_ref(),
+                    &mut self.assets.text,
                 );
             } else {
                 ui.painter()

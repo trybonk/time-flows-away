@@ -6,6 +6,7 @@ pub struct Assets {
     image_path: Option<String>,
     font_path: Option<String>,
     pub texture: Option<egui::TextureHandle>,
+    pub text: time_flows_away_native::wallpaper::text::TextRenderer,
     image_error: Option<String>,
     font_error: Option<String>,
 }
@@ -15,6 +16,7 @@ impl Assets {
             image_path: None,
             font_path: None,
             texture: None,
+            text: Default::default(),
             image_error: None,
             font_error: None,
         }
@@ -36,6 +38,28 @@ impl Assets {
             self.font_error = None;
             let mut definitions = egui::FontDefinitions::default();
             let mut family = definitions.families[&egui::FontFamily::Proportional].clone();
+            #[cfg(windows)]
+            {
+                let fonts = PathBuf::from(
+                    std::env::var_os("WINDIR").unwrap_or_else(|| r"C:\Windows".into()),
+                )
+                .join("Fonts");
+                if let Ok(bytes) = font_bytes(&fonts.join("seguiemj.ttf")) {
+                    definitions.font_data.insert(
+                        "system-emoji".into(),
+                        egui::FontData::from_owned(bytes).into(),
+                    );
+                    // Input fields use outline glyphs, while wallpaper/preview
+                    // use Windows' native color renderer. Prefer the current OS
+                    // font to egui's bundled older emoji fallbacks.
+                    family.insert(1, "system-emoji".into());
+                    definitions
+                        .families
+                        .get_mut(&egui::FontFamily::Proportional)
+                        .unwrap()
+                        .insert(1, "system-emoji".into());
+                }
+            }
             if let Some(bytes) = system_fonts()
                 .into_iter()
                 .find_map(|path| font_bytes(&path).ok())

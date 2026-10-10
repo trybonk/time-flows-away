@@ -92,15 +92,13 @@ pub fn owner(cc: &eframe::CreationContext<'_>) -> usize {
     0
 }
 #[cfg(windows)]
-pub fn focus_settings() -> bool {
+fn settings_window() -> Option<windows_sys::Win32::Foundation::HWND> {
     use windows_sys::Win32::{
         Foundation::CloseHandle,
         System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
         },
-        UI::WindowsAndMessaging::{
-            FindWindowW, GetWindowThreadProcessId, SW_RESTORE, SetForegroundWindow, ShowWindow,
-        },
+        UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId},
     };
     let title: Vec<u16> = "Time Flows Away — Settings"
         .encode_utf16()
@@ -111,33 +109,113 @@ pub fn focus_settings() -> bool {
     unsafe {
         let window = FindWindowW(std::ptr::null(), title.as_ptr());
         if window.is_null() {
-            return false;
+            return None;
         }
         let mut pid = 0;
         GetWindowThreadProcessId(window, &mut pid);
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if process.is_null() {
-            return false;
+            return None;
         }
         let mut buffer = vec![0u16; 32768];
         let mut len = buffer.len() as u32;
         let queried = QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut len) != 0;
         CloseHandle(process);
         if !queried {
-            return false;
+            return None;
         }
         let found = String::from_utf16_lossy(&buffer[..len as usize]);
         let Ok(own) = std::env::current_exe() else {
-            return false;
+            return None;
         };
         if !found
             .trim_start_matches(r"\\?\")
             .eq_ignore_ascii_case(own.to_string_lossy().trim_start_matches(r"\\?\"))
         {
-            return false;
+            return None;
         }
-        ShowWindow(window, SW_RESTORE);
-        SetForegroundWindow(window);
+        Some(window)
+    }
+}
+#[cfg(windows)]
+pub fn focus_settings() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SW_RESTORE, SetForegroundWindow, ShowWindow,
+    };
+    if let Some(window) = settings_window() {
+        unsafe {
+            ShowWindow(window, SW_RESTORE);
+            SetForegroundWindow(window);
+        }
         true
+    } else {
+        false
+    }
+}
+#[cfg(windows)]
+pub fn close_settings() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    if let Some(window) = settings_window() {
+        // Ask the verified settings window to close normally; never terminate
+        // processes. This also handles a window opened via --settings.
+        unsafe {
+            PostMessageW(window, WM_CLOSE, 0, 0);
+        }
+    }
+}
+#[cfg(windows)]
+pub struct SettingsLifetime(windows_sys::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+impl SettingsLifetime {
+    pub fn attach(pid: u32) -> Self {
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        // A parent that already exited during GUI initialization must still
+        // close its settings window, rather than leaving an orphan.
+        Self(handle)
+    }
+    pub fn finished(&self) -> bool {
+        use windows_sys::Win32::{
+            Foundation::WAIT_OBJECT_0, System::Threading::WaitForSingleObject,
+        };
+        self.0.is_null() || unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
+    }
+}
+#[cfg(windows)]
+impl Drop for SettingsLifetime {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(all(windows, test))]
+mod tests {
+    use super::SettingsLifetime;
+    use std::{
+        os::windows::process::CommandExt,
+        process::{Command, Stdio},
+    };
+    #[test]
+    fn settings_lifetime_tracks_owner_exit_and_missing_owner() {
+        let own = SettingsLifetime::attach(std::process::id());
+        assert!(!own.finished());
+        assert!(SettingsLifetime::attach(0).finished());
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "exit", "0"])
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        // Child keeps a process handle even if exit raced with attach. Either
+        // an opened signaled handle or a missing owner must close settings.
+        let lifetime = SettingsLifetime::attach(child.id());
+        assert!(child.wait().unwrap().success());
+        assert!(lifetime.finished());
     }
 }

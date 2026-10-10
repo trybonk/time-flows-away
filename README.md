@@ -24,6 +24,8 @@ OpenGL is the default renderer on Windows. Right-click the tray clock for
 The tray icon may be in Windows' hidden-icons menu. Repeated wallpaper launches
 are ignored. Wallpaper mode uses a supervisor and a renderer process; Explorer
 recovery restarts the renderer. Settings run in a separate ordinary window.
+Quitting the wallpaper closes its settings window too. An Explorer restart
+keeps settings open.
 
 | Mode | Start | Exit |
 |---|---|---|
@@ -45,6 +47,9 @@ two seconds. Closing settings discards unsaved edits. **Reset to defaults** chan
 the preview until you save. Settings need not be open for wallpaper to run.
 
 - Heading/footer, font file (TTF/OTF/TTC), four text sizes and text color.
+- Color emoji from Windows' Segoe UI Emoji in wallpaper and live preview.
+  Emoji keep their native colors when the text color or font changes. Input
+  fields use monochrome system glyphs.
 - Five progress colors, bar width/height/gap, horizontal/vertical alignment and offsets.
 - Date/time formats, 12/24-hour presets and weekday.
 - Solid or PNG/JPEG background, panel color and opacity.
