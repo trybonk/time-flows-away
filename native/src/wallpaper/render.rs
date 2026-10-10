@@ -1,5 +1,6 @@
 use super::clock::Clock;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2};
+pub const BACKGROUND: Color32 = Color32::from_rgb(22, 22, 22);
 // Defaults from project.json, rather than CSS before the host applies settings.
 const COLORS: [Color32; 5] = [
     Color32::from_rgb(188, 189, 190),
@@ -10,7 +11,7 @@ const COLORS: [Color32; 5] = [
 ];
 pub fn draw(ctx: &egui::Context, clock: &Clock) {
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(Color32::from_rgb(22, 22, 22)))
+        .frame(egui::Frame::NONE.fill(BACKGROUND))
         .show(ctx, |ui| {
             let bounds = ui.max_rect();
             let scale = (bounds.width() / 850.0)

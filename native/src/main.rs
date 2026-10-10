@@ -32,6 +32,26 @@ fn run() -> eframe::Result {
         },
         ..Default::default()
     };
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
+        wgpu_setup: setup.into(),
+        ..Default::default()
+    };
+    let default_surface_error = wgpu_options.on_surface_error.clone();
+    let last_error = std::sync::Mutex::new(None::<(wgpu::SurfaceError, std::time::Instant)>);
+    wgpu_options.on_surface_error = std::sync::Arc::new(move |error| {
+        // An occluded surface can fail repeatedly; retain the first event and
+        // each new error kind without writing a line on every scheduled tick.
+        if let Ok(mut last) = last_error.lock() {
+            let now = std::time::Instant::now();
+            if last.as_ref().is_none_or(|(previous, time)| {
+                *previous != error || now.duration_since(*time).as_secs() >= 10
+            }) {
+                diagnostics::event(&format!("GPU surface error: {error:?}; frame skipped"));
+                *last = Some((error.clone(), now));
+            }
+        }
+        default_surface_error(error)
+    });
     diagnostics::event(if preview {
         "Starting preview"
     } else {
@@ -57,10 +77,7 @@ fn run() -> eframe::Result {
             Some(Box::new(desktop::wallpaper_viewport))
         },
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            wgpu_setup: setup.into(),
-            ..Default::default()
-        },
+        wgpu_options,
         ..Default::default()
     };
     eframe::run_native(

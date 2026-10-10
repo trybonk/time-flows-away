@@ -1,13 +1,12 @@
 # MVP validation
 
 Validated in the Codex Linux cloud environment using Rust 1.99.0 and the committed
-Cargo.lock. The user confirmed that the first Windows build renders the wallpaper and supplied
-a comparison screenshot. They reported a small initial clock in the corner before
-it grew/centered, one brief appearance over other windows, and a persistent console.
-This follow-up removes the console, initializes display-sized rendering before
-first visibility, preserves child styles across winit updates, avoids unnecessary
-Shell reordering, and adjusts vertical spacing. Full Windows desktop acceptance
-and manual verification of these fixes are **pending**.
+Cargo.lock. The first Windows feedback identified corner/size changes at startup,
+a persistent console, and a brief appearance over other windows. The subsequent
+manual report confirms the startup and console fixes and most desktop checks.
+It also identifies a remaining post-startup flash and a one-second black
+background. Results and log evidence are recorded below; full Windows desktop
+acceptance remains **pending resolution of those visual issues**.
 
 | Check | Result |
 |---|---|
@@ -19,8 +18,8 @@ and manual verification of these fixes are **pending**.
 | Windows GNU x64 release build | Cross-compiled; this does not prove Windows runtime behavior |
 | Release Linux preview in Xvfb + Mesa Vulkan | Rendered background and all 5 bar colors; clock pixels changed; Esc exited with code 0 |
 | Frozen setup script replay | Local pinned Rust and extracted Debian tools; release build steps repeatable |
-| GitHub Actions workflow | Added; actual Windows MSVC runner result must be checked in GitHub Actions |
-| Window style regression tests | Two additional Windows-only tests compile with the Win32 module; execution belongs to Windows CI |
+| GitHub Actions workflow | Initial MVP and startup follow-up Windows MSVC runs succeeded; diagnostic follow-up requires its own run |
+| Window style regression tests | Two Windows-only tests compiled locally and ran in the successful startup follow-up Windows CI; diagnostic follow-up CI pending |
 | Original four web source files | Unchanged from initial checkout |
 
 The preview was tested with real wgpu Vulkan rendering, not only an egui layout
@@ -45,8 +44,9 @@ of this MVP.
 
 The user returned the manual checklist after the startup/console follow-up.
 These are user-observed results, not cloud-executed Windows tests. The exact
-binary hash, display resolution, GPU driver version, and event log were not
-included in the report.
+binary hash and GPU driver version were not included in the report. The user
+subsequently supplied the event log; placement entries identify 1920x1080 as the
+normal display size and show a 1600x900 resolution test.
 
 Environment: Windows 11 Pro 25H2, OS build 26200.6584; Intel Core i5-9400F,
 32 GB RAM, NVIDIA RTX 3060 12 GB.
@@ -76,3 +76,18 @@ Desktop acceptance remains incomplete until the two visual issues are resolved
 and verified on Windows. These results support keeping the working desktop
 integration while investigating the remaining faults; they do not establish
 their cause or justify calling the follow-up fully stable.
+
+The supplied log records initial placement at startup, the resolution changes
+at 10:16:20 and 10:16:28, and an Explorer-destroyed HWND at 10:17:12 followed by
+a fresh renderer/attachment at 10:17:14 (user's local timestamps, 2026-10-10).
+There are no logged idle placement repairs or attachment/recovery errors in the
+provided excerpt. That evidence supports the recovery/resizing checks but cannot
+rule out toolkit window changes or presentation faults: those events were not
+logged by that version, and exact flash times were not supplied.
+
+The diagnostic follow-up aligns the GPU clear color with the opaque #161616
+panel and records adapter/driver details, rate-limited surface errors, guarded
+window-style/layer requests and visibility changes with millisecond timestamps.
+The existing surface-error handling policy is preserved. The two visual issues
+remain open until this build is retested on Windows; this is not a verified
+compositor fix.

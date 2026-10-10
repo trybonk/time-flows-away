@@ -43,14 +43,32 @@ unsafe extern "system" fn child_window_proc(
     unsafe {
         if message == WM_STYLECHANGING && lparam != 0 {
             let styles = &mut *(lparam as *mut STYLESTRUCT);
+            let requested = styles.styleNew;
             match wparam as i32 {
                 GWL_STYLE => styles.styleNew = child_style(styles.styleNew),
                 GWL_EXSTYLE => styles.styleNew = child_extended_style(styles.styleNew, raised != 0),
                 _ => (),
             }
+            if requested != styles.styleNew {
+                crate::diagnostics::event(&format!(
+                    "Window style guarded: index={} requested={requested:#x} applied={:#x}",
+                    wparam as i32, styles.styleNew
+                ));
+            }
         } else if message == WM_WINDOWPOSCHANGING && lparam != 0 {
             let position = &mut *(lparam as *mut WINDOWPOS);
+            if position.flags & SWP_NOZORDER == 0 {
+                crate::diagnostics::event(&format!(
+                    "Window layer change blocked: flags={:#x} after={:#x}",
+                    position.flags, position.hwndInsertAfter as usize
+                ));
+            }
             position.flags |= SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER;
+        } else if message == WM_SHOWWINDOW {
+            crate::diagnostics::event(&format!(
+                "Window visibility: show={} reason={lparam}",
+                wparam != 0
+            ));
         } else if message == WM_NCDESTROY {
             RemoveWindowSubclass(hwnd, Some(child_window_proc), id);
         }

@@ -11,6 +11,17 @@ pub struct WallpaperApp {
 }
 impl WallpaperApp {
     pub fn new(cc: &eframe::CreationContext<'_>, preview: bool) -> Self {
+        if let Some(state) = &cc.wgpu_render_state {
+            let adapter = state.adapter.get_info();
+            crate::diagnostics::event(&format!(
+                "GPU adapter: name={} backend={:?} driver={} driver_info={} format={:?}",
+                adapter.name,
+                adapter.backend,
+                adapter.driver,
+                adapter.driver_info,
+                state.target_format
+            ));
+        }
         // System fonts stay on the user's machine; load once, never each frame.
         for path in system_fonts() {
             if let Ok(bytes) = std::fs::read(path) {
@@ -50,6 +61,12 @@ impl WallpaperApp {
     }
 }
 impl eframe::App for WallpaperApp {
+    fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
+        // The surface clear and the panel must agree, including full opacity.
+        // eframe's default is a different, partially transparent dark color.
+        render::BACKGROUND.to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         let now = Local::now();
         if let Some(desktop) = self.desktop.as_mut() {

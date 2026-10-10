@@ -17,7 +17,7 @@ pub fn event(message: &str) {
             let _ = writeln!(
                 file,
                 "{} pid={} {message}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
                 std::process::id()
             );
         }

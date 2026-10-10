@@ -20,7 +20,10 @@ cargo build --locked --release
 
 Rust 1.99.0 is pinned in rust-toolchain.toml. Windows binaries use the GUI subsystem
 and do not create a terminal. Diagnostics go to
-`%LOCALAPPDATA%\TimeFlowsAway\app.log`. Preview is a normal window; Esc closes it. In wallpaper mode hold
+`%LOCALAPPDATA%\TimeFlowsAway\app.log`. The log includes millisecond timestamps,
+GPU/driver identification, surface errors, guarded style/layer changes and window
+visibility events. Identical surface errors are rate-limited to one entry per
+ten seconds; a new error kind is recorded immediately. Preview is a normal window; Esc closes it. In wallpaper mode hold
 **Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Use the chord for orderly detachment; closing a terminal is no longer necessary.
 No administrator privileges are required.
 
@@ -105,6 +108,9 @@ JhengHei/YaHei then egui fonts; Linux preview uses a local Noto Sans CJK font.
 Missing CJK fonts may show missing glyphs.
 Fonts, kerning and egui rasterization differ from browser rendering. egui logical
 points scale with display DPI; physical measurements need checking on Windows.
+Both the GPU clear color and the painted panel use the same opaque #161616
+background. This avoids eframe's different translucent default clear color;
+it does not establish the cause of any transient compositor flash.
 
 Original properties identified for later stages: colors, position, sizes, 12/24h,
 weekday, date/time formats, headings, font, background file, text-mask opacity,
