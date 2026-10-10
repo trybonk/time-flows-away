@@ -1,5 +1,37 @@
 # Validation
 
+## 0.3.1 optimization and antialiasing
+
+This increment adds frame deadlines, a smaller font atlas, cached text layouts
+and whole-second strings, a shared text/emoji texture budget, viewport-sized
+background images, and reduced repainting when settings are unfocused or Windows
+reports a locked session / powered-off display. Window placement and the OpenGL
+surface configuration are preserved.
+
+Windows ordinary text now uses DirectWrite with grayscale antialiasing, up to 3x
+supersampling and Lanczos reduction to physical size. Color emoji receive the same
+quality reduction instead of relying on bilinear minification of a large texture.
+Wallpaper no longer puts complete CJK/Segoe emoji files into egui. Linux still uses
+its egui/Noto development fallback, so Linux screenshots cannot establish the
+appearance or RAM savings of the Windows text path.
+
+Local checks: formatting, Linux Clippy and 25 executed unit tests passed; Windows
+GNU all-target Clippy and release cross-compilation passed. Actual Linux release
+checks exercised OpenGL rendering, colored mixed text/emoji, interpolation while
+digits stayed fixed, pause/resume, quality toggles, animation off, settings/save,
+last-valid reload, custom font/image/timer and clean exit. The background startup
+and resize debounce follow-up also passed settings and Vulkan preview checks. Native
+DirectWrite pixel coverage, custom-font loading, texture bounds and absence of
+system-font copies have Windows-only tests compiled locally; their execution is
+delegated to the Windows GitHub Actions run for this commit.
+
+Performance measurements and Windows CI outcomes are recorded after completion.
+Use the focused 0.3.1 checklist and `--performance` alongside the existing CPU/RAM
+CSV helper. User validation of 0.3.0 does not validate the new Windows rendering
+path, lock/power notifications, actual frame rate or hardware resource use.
+
+## Earlier development results
+
 The latest user comparison on Windows 11 25H2 / RTX 3060 reports that the
 observed flashes **seem to have disappeared with OpenGL**. Two OpenGL starts
 were logged at 16:58:37 and 17:00:33 on 2026-10-10, both NVIDIA OpenGL 3.3.0,

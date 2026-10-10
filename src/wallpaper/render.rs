@@ -1,8 +1,56 @@
 use crate::config::{Alignment, Config};
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Timelike};
 use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2};
 pub fn color(rgb: [u8; 3]) -> Color32 {
     Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+enum Row {
+    Text(String, f32),
+    Bars(usize, usize),
+    Gap(f32),
+}
+pub(super) struct Scene {
+    config: Config,
+    tick: NaiveDateTime,
+    rows: Vec<Row>,
+}
+impl Scene {
+    fn new(now: NaiveDateTime, c: &Config) -> Self {
+        let mut date = now.format(&c.date_format).to_string();
+        if c.show_weekday {
+            date.push_str(&now.format(" %A").to_string());
+        }
+        let mut rows = Vec::new();
+        if !c.header.is_empty() {
+            rows.extend([Row::Text(c.header.clone(), c.header_size), Row::Gap(30.0)]);
+        }
+        rows.extend([
+            Row::Text(date, c.date_size),
+            Row::Gap(24.0),
+            Row::Bars(0, 2),
+            Row::Gap(16.0),
+            Row::Text(now.format(&c.time_format).to_string(), c.time_size),
+            Row::Gap(22.0),
+            Row::Bars(2, 3),
+        ]);
+        if !c.footer.is_empty() {
+            rows.extend([Row::Gap(18.0), Row::Text(c.footer.clone(), c.footer_size)]);
+        }
+        if let Some(text) = c.timer_text(now) {
+            rows.extend([Row::Gap(18.0), Row::Text(text, c.countdown_size)]);
+        }
+        Self {
+            config: c.clone(),
+            tick: now.with_nanosecond(0).unwrap(),
+            rows,
+        }
+    }
+    fn stale(&self, now: NaiveDateTime, c: &Config) -> bool {
+        self.config != *c
+            || self.tick != now.with_nanosecond(0).unwrap()
+            || c.date_format.contains(['f', '+'])
+            || c.time_format.contains(['f', '+'])
+    }
 }
 pub fn draw(
     ctx: &egui::Context,
@@ -35,6 +83,7 @@ pub fn draw_in(
     text_renderer: &mut super::text::TextRenderer,
     progress: [f32; 5],
 ) {
+    text_renderer.begin_frame(ui.ctx());
     let painter = ui.painter().with_clip_rect(bounds);
     painter.rect_filled(bounds, 0.0, color(c.background));
     if let Some(image) = image {
@@ -52,39 +101,11 @@ pub fn draw_in(
         };
         painter.image(image.id(), bounds, uv, Color32::WHITE);
     }
-    let mut date = now.format(&c.date_format).to_string();
-    if c.show_weekday {
-        date.push_str(&now.format(" %A").to_string());
-    }
-    let time = now.format(&c.time_format).to_string();
-    enum Row {
-        Text(String, f32),
-        Bars(usize, usize),
-        Gap(f32),
-    }
-    let mut rows = Vec::new();
-    if !c.header.is_empty() {
-        rows.extend([Row::Text(c.header.clone(), c.header_size), Row::Gap(30.0)]);
-    }
-    rows.extend([
-        Row::Text(date, c.date_size),
-        Row::Gap(24.0),
-        Row::Bars(0, 2),
-        Row::Gap(16.0),
-        Row::Text(time, c.time_size),
-        Row::Gap(22.0),
-        Row::Bars(2, 3),
-    ]);
-    if !c.footer.is_empty() {
-        rows.extend([Row::Gap(18.0), Row::Text(c.footer.clone(), c.footer_size)]);
-    }
-    if let Some(text) = c.timer_text(now) {
-        rows.extend([Row::Gap(18.0), Row::Text(text, c.countdown_size)]);
-    }
-    text_renderer.retain_used(rows.iter().filter_map(|row| match row {
-        Row::Text(text, _) => Some(text.as_str()),
-        _ => None,
-    }));
+    let scene = match text_renderer.scene.take() {
+        Some(scene) if !scene.stale(now, c) => scene,
+        _ => Scene::new(now, c),
+    };
+    let rows = &scene.rows;
     let font = |size| FontId::new(size, FontFamily::Name("wallpaper".into()));
     let height = |row: &Row| match row {
         Row::Text(_, size) => *size,
@@ -129,7 +150,7 @@ pub fn draw_in(
     );
     let center_x = origin.x + size.x * 0.5;
     let mut y = origin.y;
-    for row in &rows {
+    for row in rows {
         match row {
             Row::Text(text, size) => {
                 text_renderer.draw_centered(
@@ -165,5 +186,74 @@ pub fn draw_in(
             Row::Gap(_) => {}
         }
         y += height(row) * scale;
+    }
+    text_renderer.scene = Some(scene);
+    text_renderer.finish_frame(ui.ctx());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cached_scene_keeps_ticks_and_fractional_formats_live() {
+        let ctx = egui::Context::default();
+        let mut fonts = egui::FontDefinitions::default();
+        let family = fonts.families[&FontFamily::Proportional].clone();
+        fonts
+            .families
+            .insert(FontFamily::Name("wallpaper".into()), family);
+        ctx.set_fonts(fonts);
+        let mut renderer = super::super::text::TextRenderer::default();
+        let mut config = Config {
+            header: "Clock".into(),
+            time_format: "%H:%M:%S%.3f".into(),
+            ..Default::default()
+        };
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 10, 10)
+            .unwrap()
+            .and_hms_opt(12, 34, 56)
+            .unwrap();
+        for millis in [100, 200] {
+            let _ = ctx.run(Default::default(), |ctx| {
+                draw(
+                    ctx,
+                    date + chrono::Duration::milliseconds(millis),
+                    &config,
+                    None,
+                    &mut renderer,
+                    [0.5; 5],
+                )
+            });
+            assert!(
+                renderer
+                    .scene
+                    .as_ref()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|r| matches!(r,Row::Text(t,_) if t==&format!("12:34:56.{millis}")))
+            );
+        }
+        config.time_format = "%H:%M:%S".into();
+        config.header = "Updated".into();
+        let _ = ctx.run(Default::default(), |ctx| {
+            draw(
+                ctx,
+                date + chrono::Duration::seconds(1),
+                &config,
+                None,
+                &mut renderer,
+                [0.5; 5],
+            )
+        });
+        let rows = &renderer.scene.as_ref().unwrap().rows;
+        assert!(
+            rows.iter()
+                .any(|r| matches!(r,Row::Text(t,_) if t=="Updated"))
+        );
+        assert!(
+            rows.iter()
+                .any(|r| matches!(r,Row::Text(t,_) if t=="12:34:57"))
+        );
     }
 }

@@ -6,6 +6,7 @@ pub struct Options {
     pub worker: bool,
     pub wallpaper_owner: Option<u32>,
     pub opengl: bool,
+    pub performance: bool,
     pub config: PathBuf,
 }
 impl Options {
@@ -16,6 +17,7 @@ impl Options {
             worker: false,
             wallpaper_owner: None,
             opengl: cfg!(windows),
+            performance: false,
             config: time_flows_away_native::config::default_path(),
         };
         let mut renderer = None;
@@ -24,6 +26,7 @@ impl Options {
             match arg.to_str() {
                 Some("--preview") => result.preview = true,
                 Some("--settings") => result.settings = true,
+                Some("--performance") => result.performance = true,
                 Some("--wallpaper-worker") => result.worker = true,
                 Some("--wallpaper-owner") => {
                     result.wallpaper_owner = Some(
@@ -68,6 +71,9 @@ impl Options {
         if let Some(pid) = self.wallpaper_owner {
             args.extend(["--wallpaper-owner".into(), pid.to_string().into()]);
         }
+        if self.performance {
+            args.push("--performance".into());
+        }
         args
     }
 }
@@ -97,6 +103,7 @@ mod tests {
         let original = parse(&[
             "--settings",
             "--opengl",
+            "--performance",
             "--config",
             "settings with spaces.toml",
             "--wallpaper-owner",
@@ -105,6 +112,7 @@ mod tests {
         .unwrap();
         let child = Options::parse(original.child_args()).unwrap();
         assert!(child.opengl);
+        assert!(child.performance);
         assert_eq!(child.config, original.config);
         assert_eq!(child.wallpaper_owner, Some(1234));
         assert!(!parse(&["--wgpu"]).unwrap().opengl);

@@ -11,6 +11,14 @@ use windows_sys::Win32::{
         ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
         ScreenToClient,
     },
+    System::{
+        Power::{
+            HPOWERNOTIFY, POWERBROADCAST_SETTING, RegisterPowerSettingNotification,
+            UnregisterPowerSettingNotification,
+        },
+        RemoteDesktop::{WTSRegisterSessionNotification, WTSUnRegisterSessionNotification},
+        SystemServices::GUID_CONSOLE_DISPLAY_STATE,
+    },
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForSystem, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT},
@@ -21,6 +29,8 @@ use windows_sys::Win32::{
 
 const SUBCLASS_ID: usize = 1;
 static DISPLAY_DIRTY: AtomicBool = AtomicBool::new(false);
+static DISPLAY_ON: AtomicBool = AtomicBool::new(true);
+static SESSION_ACTIVE: AtomicBool = AtomicBool::new(true);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PrimaryDisplay {
@@ -97,6 +107,31 @@ unsafe extern "system" fn child_window_proc(
     raised: usize,
 ) -> LRESULT {
     unsafe {
+        if message == WM_WTSSESSION_CHANGE {
+            match wparam as u32 {
+                WTS_SESSION_LOCK | WTS_SESSION_LOGOFF => {
+                    SESSION_ACTIVE.store(false, Ordering::Relaxed);
+                }
+                WTS_SESSION_UNLOCK | WTS_SESSION_LOGON => {
+                    SESSION_ACTIVE.store(true, Ordering::Relaxed);
+                }
+                _ => (),
+            }
+            DISPLAY_DIRTY.store(true, Ordering::Relaxed);
+        }
+        if message == WM_POWERBROADCAST && wparam as u32 == PBT_POWERSETTINGCHANGE && lparam != 0 {
+            let state = &*(lparam as *const POWERBROADCAST_SETTING);
+            let guid = state.PowerSetting;
+            if guid.data1 == GUID_CONSOLE_DISPLAY_STATE.data1
+                && guid.data2 == GUID_CONSOLE_DISPLAY_STATE.data2
+                && guid.data3 == GUID_CONSOLE_DISPLAY_STATE.data3
+                && guid.data4 == GUID_CONSOLE_DISPLAY_STATE.data4
+                && state.DataLength >= 4
+            {
+                let value = (state.Data.as_ptr() as *const u32).read_unaligned();
+                DISPLAY_ON.store(value != 0, Ordering::Relaxed);
+            }
+        }
         if matches!(
             message,
             WM_DISPLAYCHANGE | WM_DPICHANGED | WM_DPICHANGED_AFTERPARENT | WM_POWERBROADCAST
@@ -334,6 +369,8 @@ pub struct Desktop {
     dpi: f32,
     repair_failed_since: Option<Instant>,
     animation_visible: bool,
+    power_notification: HPOWERNOTIFY,
+    session_notification: bool,
     closing: bool,
     subclassed: bool,
     monitor: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
@@ -360,11 +397,24 @@ impl Desktop {
                 dpi: PrimaryDisplay::read()?.dpi as f32 / 96.0,
                 repair_failed_since: None,
                 animation_visible: true,
+                power_notification: 0,
+                session_notification: false,
                 monitor: None,
                 closing: false,
                 subclassed: false,
             };
             desktop.embed()?;
+            desktop.power_notification = RegisterPowerSettingNotification(
+                hwnd,
+                &GUID_CONSOLE_DISPLAY_STATE,
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            );
+            desktop.session_notification = WTSRegisterSessionNotification(hwnd, 0) != 0;
+            if desktop.power_notification == 0 || !desktop.session_notification {
+                crate::diagnostics::event(
+                    "Power/session notification unavailable; using desktop visibility polling",
+                );
+            }
             if std::env::args().any(|arg| arg == "--wallpaper-worker") {
                 let (stop, receiver) = std::sync::mpsc::channel();
                 let handle = hwnd as usize;
@@ -385,7 +435,10 @@ impl Desktop {
                                 std::process::exit(super::supervisor::SHELL_LOST);
                             }
                             let current = PrimaryDisplay::read().ok();
-                            if current != display || last.elapsed() > Duration::from_secs(3) {
+                            if current != display
+                                || DISPLAY_DIRTY.load(Ordering::Relaxed)
+                                || last.elapsed() > Duration::from_secs(3)
+                            {
                                 display = current;
                                 DISPLAY_DIRTY.store(true, Ordering::Relaxed);
                                 ctx.request_repaint();
@@ -566,6 +619,9 @@ impl Desktop {
     pub fn animation_visible(&self) -> bool {
         self.animation_visible
     }
+    pub fn rendering_suspended(&self) -> bool {
+        !DISPLAY_ON.load(Ordering::Relaxed) || !SESSION_ACTIVE.load(Ordering::Relaxed)
+    }
     fn repair(&mut self) -> Result<(), String> {
         unsafe {
             if !owns(self.hwnd) {
@@ -676,6 +732,14 @@ impl Desktop {
 }
 impl Drop for Desktop {
     fn drop(&mut self) {
+        unsafe {
+            if self.power_notification != 0 {
+                UnregisterPowerSettingNotification(self.power_notification);
+            }
+            if self.session_notification && owns(self.hwnd) {
+                WTSUnRegisterSessionNotification(self.hwnd);
+            }
+        }
         if !self.closing && self.monitor.is_some() && !owns(self.hwnd) {
             std::process::exit(super::supervisor::SHELL_LOST);
         }

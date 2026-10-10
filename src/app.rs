@@ -3,7 +3,7 @@ use chrono::{Local, NaiveDateTime};
 use eframe::egui;
 use time_flows_away_native::{
     config::Store,
-    wallpaper::{animation::repaint_delay, render},
+    wallpaper::{animation::repaint_delay, performance::FramePacer, render},
 };
 pub struct WallpaperApp {
     desktop: Option<Desktop>,
@@ -11,6 +11,8 @@ pub struct WallpaperApp {
     store: Store,
     assets: Assets,
     paused: Option<NaiveDateTime>,
+    pacer: FramePacer,
+    performance: crate::diagnostics::Performance,
     #[cfg(windows)]
     options: Options,
     #[cfg(windows)]
@@ -25,7 +27,7 @@ impl WallpaperApp {
             crate::diagnostics::event(&format!("Invalid settings; using defaults: {error}"));
         }
         let mut assets = Assets::new();
-        assets.sync(&cc.egui_ctx, &store.current);
+        assets.prepare(&cc.egui_ctx, &store.current);
         if let Some(error) = assets.error() {
             crate::diagnostics::event(&format!("Asset fallback: {error}"));
         }
@@ -53,11 +55,20 @@ impl WallpaperApp {
             None
         };
         Self {
+            performance: crate::diagnostics::Performance::new(
+                options.performance,
+                if options.preview {
+                    "preview"
+                } else {
+                    "wallpaper"
+                },
+            ),
             desktop,
             status,
             store,
             assets,
             paused: None,
+            pacer: FramePacer::default(),
             #[cfg(windows)]
             options,
             #[cfg(windows)]
@@ -115,10 +126,13 @@ impl WallpaperApp {
     }
 }
 impl eframe::App for WallpaperApp {
+    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+        time_flows_away_native::wallpaper::performance::limit_atlas(input);
+    }
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
         render::color(self.store.current.background).to_normalized_gamma_f32()
     }
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
         let now = Local::now();
         #[cfg(windows)]
@@ -180,6 +194,13 @@ impl eframe::App for WallpaperApp {
             crate::diagnostics::event(&format!("Asset fallback: {error}"));
         }
         let sampled = self.paused.unwrap_or(now.naive_local());
+        #[cfg(not(windows))]
+        let suspended = false;
+        #[cfg(windows)]
+        let suspended = self
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.rendering_suspended());
         let animation_fps = self.store.current.animation_fps;
         #[cfg(windows)]
         let animation_fps = if self
@@ -215,11 +236,20 @@ impl eframe::App for WallpaperApp {
                     }
                 });
         }
-        let next_frame = repaint_delay(now.naive_local(), animation_fps, self.paused.is_some())
-            .saturating_sub(frame_started.elapsed());
         // Keep config polling on its own deadline; rounding it to clock ticks
         // can otherwise turn the two-second interval into three seconds.
-        ctx.request_repaint_after(next_frame.min(self.store.next_probe()));
+        self.pacer.schedule(
+            ctx,
+            frame_started,
+            repaint_delay(
+                now.naive_local(),
+                animation_fps,
+                self.paused.is_some() || suspended,
+            ),
+            self.store.next_probe(),
+        );
+        self.performance
+            .record(ctx, frame, frame_started.elapsed(), &self.assets.text);
     }
 }
 pub fn log_adapter(cc: &eframe::CreationContext<'_>) {

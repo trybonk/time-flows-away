@@ -82,6 +82,28 @@ compared with --wgpu; the previous flashes occurred with this path on an RTX 306
       animation off, 30/60 FPS, paused, and Settings open. Watch recovery when
       minimizing the foreground app. Use the measurement procedure below.
 
+## Focused 0.3.1 optimization checks
+
+- [ ] Keep High quality text enabled. Compare digits, CJK, Cyrillic and 🤫/🎣
+      against the previous build at 100%, 125%, 150% and 200% scale. Edges should
+      be smooth, emoji colored, and mixed text aligned. Repeat with a custom font
+      and a smaller/larger preview; look for clipped italic accents/descenders.
+- [ ] Run `time-flows-away-native.exe --performance` with settings closed.
+      After a minute, inspect `Performance:` in app.log for actual FPS at 30 and
+      60. Repeat on a display above 60 Hz if available; the app should not simply
+      run at the monitor's refresh rate. Test bars and 59 -> 00 rollover.
+- [ ] Change fonts, quality, colors, DPI and labels repeatedly. No old glyphs,
+      squares, disappearing emoji, crashes or continuing memory growth. Test a
+      fractional format such as `%H:%M:%S%.3f`; it must update within a second.
+- [ ] Load a large PNG/JPEG, then change resolution and clear the image. Cover
+      cropping remains centered; old textures do not accumulate. Repeatedly
+      open/close settings and compare resources with settings closed afterward.
+- [ ] Lock/unlock, turn the display off/on and sleep/wake. The wallpaper returns
+      promptly, behind icons, with current time and without a foreground flash.
+      Minimize/restore settings and verify its preview resumes smoothly.
+- [ ] Recheck Explorer recovery, Pause/Resume, tray Quit and the exit chord with
+      settings open. Observe resource use for at least 30 minutes.
+
 ## Resource measurement
 
 Close the previous build before measuring. Start the downloaded EXE; open

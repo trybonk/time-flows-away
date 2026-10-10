@@ -3,7 +3,7 @@ use chrono::Local;
 use eframe::egui;
 use time_flows_away_native::{
     config::{self, Alignment, Config, CountdownMode},
-    wallpaper::{animation::repaint_delay, render},
+    wallpaper::{animation::repaint_delay, performance::FramePacer, render},
 };
 pub struct SettingsApp {
     options: Options,
@@ -11,6 +11,8 @@ pub struct SettingsApp {
     draft: Config,
     saved: Config,
     assets: Assets,
+    pacer: FramePacer,
+    performance: crate::diagnostics::Performance,
     message: Option<String>,
     #[cfg(windows)]
     lifetime: Option<crate::platform::SettingsLifetime>,
@@ -20,9 +22,10 @@ pub struct SettingsApp {
 impl SettingsApp {
     pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
         let store = config::Store::new(options.config.clone());
-        let mut assets = Assets::new();
-        assets.sync(&cc.egui_ctx, &store.current);
+        let mut assets = Assets::for_settings();
+        assets.prepare(&cc.egui_ctx, &store.current);
         Self {
+            performance: crate::diagnostics::Performance::new(options.performance, "settings"),
             #[cfg(windows)]
             startup: crate::platform::autostart::status(&options),
             #[cfg(windows)]
@@ -34,6 +37,7 @@ impl SettingsApp {
             draft: store.current.clone(),
             saved: store.current,
             assets,
+            pacer: FramePacer::default(),
             message: store.error,
         }
     }
@@ -52,7 +56,10 @@ impl SettingsApp {
     }
 }
 impl eframe::App for SettingsApp {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn raw_input_hook(&mut self, _: &egui::Context, input: &mut egui::RawInput) {
+        time_flows_away_native::wallpaper::performance::limit_atlas(input);
+    }
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
         let now = Local::now();
         #[cfg(windows)]
@@ -259,10 +266,22 @@ impl eframe::App for SettingsApp {
             }
             ui.label("Preview follows your edits. Save when ready to update the wallpaper.");
         });
-        ctx.request_repaint_after(
-            repaint_delay(now.naive_local(), self.draft.animation_fps, false)
-                .saturating_sub(frame_started.elapsed()),
+        self.pacer.schedule(
+            ctx,
+            frame_started,
+            repaint_delay(
+                now.naive_local(),
+                if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+                    self.draft.animation_fps
+                } else {
+                    0
+                },
+                false,
+            ),
+            std::time::Duration::from_secs(2),
         );
+        self.performance
+            .record(ctx, frame, frame_started.elapsed(), &self.assets.text);
     }
 }
 fn field(ui: &mut egui::Ui, label: &str, value: &mut String) {

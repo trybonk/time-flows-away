@@ -25,7 +25,7 @@ its installed system fonts.*
   color and opacity.
 - **Countdown and elapsed time** — track a future date or time since a past event,
   in days, detailed time, or seconds.
-- **Quality and animation** — high quality text, smooth bars at 30 FPS by default,
+- **Quality and animation** — antialiased text and color emoji, smooth bars at 30 FPS by default,
   optional 60 FPS, or animation off for lower resource use.
 - **Live settings preview** — see edits before applying them; Save / Ctrl+S
   updates the running wallpaper within two seconds.

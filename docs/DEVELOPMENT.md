@@ -157,23 +157,30 @@ The layout uses centered baselines adjusted against the supplied Wallpaper Engin
 reference screenshot and uniformly shrinks on small previews;
 it is not a pixel-identical CSS layout. With a solid background the panel is the
 same color as the page, so its rounded outline is invisible.
-Windows Microsoft JhengHei bold is loaded from the system once, falling back to
-JhengHei/YaHei then egui fonts; Linux preview uses a local Noto Sans CJK font.
+Windows uses Microsoft JhengHei bold through DirectWrite, with Windows glyph
+fallback and support for a selected TTF/OTF/TTC file. Complete system font files
+are not copied into the wallpaper's egui font definitions. Linux preview uses
+a local Noto Sans CJK font.
 Missing CJK fonts may show missing glyphs.
 Color emoji use Segoe UI Emoji through DirectWrite and a software Direct2D/WIC
 bitmap; this creates no helper HWND or GPU surface. Grapheme segmentation keeps
 variation selectors, modifiers and ZWJ sequences together. Textures (including
 failed glyphs) are cached, bounded and removed when no longer used. Wallpaper
 and live preview share this renderer. Settings input fields use the Segoe outline
-fallback. Linux preview uses installed Noto Color Emoji bitmaps for individual
+fallback only when needed. Linux preview uses installed Noto Color Emoji bitmaps for individual
 emoji; full Windows sequence shaping must be tested on Windows.
-High quality text uses egui glyphs rasterized at twice the requested size, then
-scales their geometry down while retaining high-resolution atlas texture data.
-The source layout/font atlas is cached by egui; no font decoding happens per frame.
+High quality Windows text uses DirectWrite grayscale antialiasing, up to 3x
+supersampling and Lanczos downsampling to its physical display size. Color emoji
+are also filtered to their physical size, keeping premultiplied alpha to avoid
+edge fringes. Rasterization happens on cache misses. Text layouts, scaled egui
+geometry in Linux previews, and ordinary whole-second strings are cached;
+changing DPI, fonts or an atlas reset invalidates the affected data. Fractional
+date/time formats continue updating within a second. Text/emoji textures share
+a 32 MiB budget and unused entries are released after painting.
 Geometry feathering and fractional text/rectangle positions remain enabled.
 This is grayscale antialiasing, not Windows ClearType, and does not enable MSAA
-or alter the OpenGL context/surface configuration. Emoji retain linear texture
-filtering. Fonts, kerning and egui rasterization differ from browser rendering. egui logical
+or alter the OpenGL context/surface configuration. The GPU uses linear filtering
+on the already downsampled textures. Fonts and kerning can differ from browser rendering. egui logical
 points scale with display DPI; physical measurements need checking on Windows.
 Both the GPU clear color and the painted panel use the same opaque #161616
 background. This avoids eframe's different translucent default clear color;
@@ -182,8 +189,10 @@ it does not establish the cause of any transient compositor flash.
 Stage 4 settings now expose colors, position, text/bar sizes, 12/24h presets,
 weekday, date/time formats, headings, font, background image and panel opacity,
 plus countdown/elapsed display in days, detailed time or seconds. Countdown uses
-local civil time rather than UTC elapsed time across DST. System CJK fonts are
-registered for wallpaper text; the settings UI keeps egui's normal fonts.
+local civil time rather than UTC elapsed time across DST. The settings UI keeps
+egui's normal fonts, loading CJK/emoji outline fallbacks only when needed for its
+editable text. Large background images are cropped and filtered to the physical
+viewport, respecting the 4096-pixel texture limit, rather than the GPU's maximum.
 
 The first part of stage 5 provides a tray and session-local single-instance guards
 for wallpaper and settings; preview is independent. Autorun is opt-in through
@@ -196,8 +205,20 @@ resets after a renderer restart. Running requests 30/60 FPS for smooth bars, or
 one repaint per second with animation off. When a visible foreground window covers
 the primary work area, wallpaper reduces to one-second updates; occlusion is
 checked every two seconds. This is a rectangle-based optimization, not complete
-occlusion detection. Settings preview continues animating independently.
+occlusion detection. Windows lock/display-power notifications reduce the worker
+to a two-second heartbeat; the existing lifetime monitor wakes it after a state
+change. Settings preview reduces to clock ticks while its window is unfocused.
+Frame deadlines compensate egui's predicted-frame subtraction, preventing the
+60 FPS request from becoming a continuous immediate-repaint loop.
 Interactive egui events can request additional paints.
+
+Use `time-flows-away-native.exe --performance` for aggregated diagnostics every
+30 seconds in app.log: actual update FPS, average app/backend processing times,
+frame-interval p95, atlas size and text/emoji texture cache size. The flag is
+preserved by the supervisor and settings child. The backend time excludes VSync
+waiting and is not a process CPU percentage. Use `Measure-Performance.ps1` for
+CPU/RAM/GPU, with settings closed for wallpaper-only comparisons. Discard startup
+samples and compare identical resolution, DPI, content and actual frame rates.
 Settings launched from the tray track an opened handle to the persistent
 supervisor, so they survive renderer recovery but close when the application
 exits. Quit also posts WM_CLOSE to the settings HWND after verifying its executable
