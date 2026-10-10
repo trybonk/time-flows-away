@@ -49,6 +49,25 @@ run's artifacts and extract the executable. CI compilation does **not** test
 desktop embedding. Commands run from the repository root; binaries are under
 `target/release/`, and the CI artifact includes the `docs/` directory.
 
+## Assets and saved settings
+
+Images are centered and cropped to fill the display. Layout sizes and offsets
+use logical pixels; the layout shrinks to fit small windows. Weekday and automatic
+timer labels are English. Timer durations use local civil time, including its
+clock/DST changes. Use absolute asset paths; files remain on your PC.
+
+Images are limited to 8192 pixels per side and a 256 MiB decode allocation;
+fonts (TTF/OTF/TTC) are limited to 50 MiB. An invalid asset falls back to a solid
+background or the system font, with an error in settings. To retry a replaced
+asset at the same path, clear and reselect its path.
+
+Missing settings use defaults; the file is created only on Save. Invalid edits
+keep the last valid configuration and are logged; the file is preserved for
+correction. `--config "C:\path\config.toml"` selects another file and is forwarded
+to settings and restarted workers. Reset to defaults changes the draft preview
+until saved. Color emoji retain their native colors when the text color or font
+changes; input fields use monochrome system glyphs.
+
 ## Architecture and safety
 
 - `wallpaper/clock.rs`: pure local calendar calculations and six boundary tests.
