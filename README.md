@@ -1,40 +1,75 @@
 # Time Flows Away
 
-[![Windows build](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml/badge.svg?branch=feat%2Fnative-win11-wallpaper)](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml)
+[![Windows build](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml/badge.svg)](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml)
 
 A native Windows desktop wallpaper with a clock, date, and five progress bars
-for the year, month, day, hour, and minute. Written in Rust with egui and wgpu.
-The application runs behind desktop icons without a browser or Wallpaper Engine.
+for the year, month, day, hour, and minute. Written in Rust with egui. Runs behind
+desktop icons without a browser or Wallpaper Engine.
 
-Targets **Windows 11 x64, 24H2 or newer**. This is an early MVP: most desktop
-checks passed on a user's Windows 11 25H2 PC, while two transient visual issues
-remain under investigation. See [validation results](docs/VALIDATION.md).
+Targets **Windows 11 x64, 24H2 or newer**. This is an early development release.
+Desktop checks passed on a user's Windows 11 25H2 PC; they report that the
+flashes observed with DX12 seem to have disappeared with OpenGL. Longer observation and checks on other hardware
+remain necessary. See [validation results](docs/VALIDATION.md).
 
 ## Download and run
 
 1. Open [Windows build](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml)
-   and choose a successful run for `feat/native-win11-wallpaper`.
+   and choose a successful run for the version you want. The settings release
+   is developed on `feat/settings-and-tray`.
 2. Download the `time-flows-away-windows-x64` artifact and extract the ZIP.
 3. Double-click `time-flows-away-native.exe`. Administrator rights are not required.
 
-Close an existing copy before launching another. Single-instance protection is
-not implemented yet. Wallpaper mode normally has two processes: a supervisor
-and the renderer, which can be restarted after Explorer recreates the desktop.
+OpenGL is the default renderer on Windows. Right-click the tray clock for
+**Settings**, **Pause / Resume**, and **Quit**. Double-click it to open settings.
+The tray icon may be in Windows' hidden-icons menu. Repeated wallpaper launches
+are ignored. Wallpaper mode uses a supervisor and a renderer process; Explorer
+recovery restarts the renderer. Settings run in a separate ordinary window.
 
 | Mode | Start | Exit |
 |---|---|---|
-| Desktop wallpaper | Double-click the EXE | Hold **Ctrl+Alt+Shift+Q** for at least one second |
-| Window preview | `time-flows-away-native.exe --preview` | **Esc** |
-| OpenGL comparison | `time-flows-away-native.exe --opengl` | Hold **Ctrl+Alt+Shift+Q** for at least one second |
+| Desktop wallpaper | Double-click the EXE | Tray **Quit**, or hold **Ctrl+Alt+Shift+Q** for at least one second |
+| Window preview | `time-flows-away-native.exe --preview` | **Esc**; **Space** pauses/resumes |
+| Settings | `time-flows-away-native.exe --settings`, or tray **Settings** | Close the window |
+| DX12 diagnostic comparison | `time-flows-away-native.exe --wgpu` | Tray **Quit**, or the exit chord |
 
+`--opengl` explicitly selects OpenGL; `--wgpu` selects DX12 on Windows and Vulkan
+on Linux. Both can be combined with `--preview` or `--settings`.
 The application opens without a console. Diagnostics are written to
-`%LOCALAPPDATA%\TimeFlowsAway\app.log`. For a visual fault, include this log,
-the event time, Windows build, display settings, and GPU/driver information.
+`%LOCALAPPDATA%\TimeFlowsAway\app.log`.
+
+## Customize
+
+The English settings window provides a live preview. **Save** / **Ctrl+S** writes
+`%LOCALAPPDATA%\TimeFlowsAway\config.toml`; running wallpaper loads changes within
+two seconds. Closing settings discards unsaved edits. **Reset to defaults** changes
+the preview until you save. Settings need not be open for wallpaper to run.
+
+- Heading/footer, font file (TTF/OTF/TTC), four text sizes and text color.
+- Five progress colors, bar width/height/gap, horizontal/vertical alignment and offsets.
+- Date/time formats, 12/24-hour presets and weekday.
+- Solid or PNG/JPEG background, panel color and opacity.
+- Countdown to a future local date/time or elapsed time since a past one;
+  days, days + hours/minutes/seconds, or total seconds, with prefix/suffix and size.
+
+Images are centered and cropped to fill the display. Layout sizes and offsets
+use logical pixels; the layout shrinks to fit small windows. Weekday and automatic
+timer labels are English. Timer durations use local civil time, including its
+clock/DST changes. Use an absolute asset path; files remain on your PC.
+Images are limited to 8192 pixels per side and a 256 MiB decode allocation;
+fonts are limited to 50 MiB. An invalid asset falls back to a solid background
+or the system font, with an error in settings. To retry a replaced asset at the
+same path, clear and reselect its path.
+
+The settings file is created when you save; a missing file uses original defaults.
+Invalid settings edits keep the last valid configuration and are logged; the file
+is preserved for correction. `--config "C:\path\config.toml"` selects another file
+and is forwarded to settings and restarted workers. Settings and wallpaper each
+allow one instance per Windows session; preview windows are independent.
 
 ## Build from source
 
 Install Rust and Visual Studio Build Tools with **Desktop development with C++**
-and a Windows SDK. Run these commands from the repository root:
+and a Windows SDK. Run from the repository root:
 
 ```powershell
 cargo fmt --check
@@ -42,49 +77,36 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked --release
 .\target\release\time-flows-away-native.exe --preview
+.\target\release\time-flows-away-native.exe --settings
 ```
 
-The Rust toolchain is pinned in `rust-toolchain.toml`; dependency versions are
-committed in `Cargo.lock`. GitHub Actions performs formatting, linting, tests,
-and a Windows MSVC release build, then packages the executable and documentation.
-Compilation does not establish that desktop embedding works on a particular PC.
+The toolchain is pinned in `rust-toolchain.toml`; dependencies are committed in
+`Cargo.lock`. GitHub Actions checks formatting, linting and tests, builds Windows
+MSVC and packages the executable and documentation. Pushes to `feat/**`, master,
+pull requests and manual runs are supported. Compilation does not establish
+that desktop embedding works on a particular PC.
 
 ## Project layout
 
 ```text
 Cargo.toml / Cargo.lock     Rust package and dependency lockfile
 rust-toolchain.toml         Pinned development toolchain
-src/                       Native application, desktop integration, clock and rendering
-docs/                      Architecture, development, manual checks and validation results
+src/                       Native application, settings, desktop integration and rendering
+docs/                      Development, manual checks and validation results
 legacy/wallpaper-engine/   Preserved original web wallpaper and README
 .github/workflows/         Windows CI and downloadable build artifacts
 LICENSE / NOTICE           Apache-2.0 license and original-project credits
 ```
 
-The original web files are retained as a reference. They are not used by the
-native executable. Their contents and the root license are preserved.
-
-## Current scope
-
-- Date and local 24-hour clock with the original Chinese heading and English footer.
-- Year/month/day/hour/minute progress, using actual calendar month/year lengths.
-- Primary-monitor wallpaper behind desktop icons, with a preview fallback.
-- Explorer recovery, display-size maintenance, and explicit shutdown controls.
-
-Progress bars update once per second. Settings, tray controls, autorun,
-single-instance protection, and multi-monitor rendering are planned after the
-Windows MVP is stable. A brief post-startup flash and a one-second black
-background reported on Windows remain open; the current build adds diagnostics.
-The optional `--opengl` flag uses the same UI and desktop attachment with another
-rendering backend, to compare the reported flashes against the default DX12 path.
-It can also be combined with `--preview`; it is not an automatic fallback or a
-verified fix for Windows composition.
-
-Read [development and manual testing](docs/DEVELOPMENT.md) for implementation
-details, platform limitations, and the Windows acceptance checklist.
+Primary-monitor rendering and Explorer recovery are implemented. Autorun,
+multi-monitor selection and installation/release packaging are planned next.
+No administrator privileges or automatic startup registration are used.
+Read [development details](docs/DEVELOPMENT.md) and the
+[settings and tray checklist](docs/SETTINGS-CHECKLIST.md).
 
 ## License and attribution
 
 Licensed under [Apache-2.0](LICENSE). The native design is based on
 [twenty-zhang/time-flows-away](https://github.com/twenty-zhang/time-flows-away).
 See [NOTICE](NOTICE) for original wallpaper credits and research attribution.
+The original web files are preserved as a reference; they are not used by the EXE.

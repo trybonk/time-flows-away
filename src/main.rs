@@ -1,8 +1,14 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod assets;
 mod desktop;
 mod diagnostics;
+mod options;
+mod platform;
+mod settings;
+#[cfg(windows)]
+mod tray;
 fn main() -> eframe::Result {
     #[cfg(windows)]
     std::panic::set_hook(Box::new(|panic| {
@@ -12,11 +18,27 @@ fn main() -> eframe::Result {
 }
 
 fn run() -> eframe::Result {
-    let preview = std::env::args().any(|arg| arg == "--preview");
-    let opengl = std::env::args().any(|arg| arg == "--opengl");
+    let arguments = options::Options::parse(std::env::args_os().skip(1))
+        .map_err(|e| eframe::Error::AppCreation(e.into()))?;
+    let preview = arguments.preview || arguments.settings;
+    let opengl = arguments.opengl;
     #[cfg(windows)]
-    if !preview && !std::env::args().any(|arg| arg == "--wallpaper-worker") {
-        match desktop::supervisor::run() {
+    let _instance = if !arguments.worker && !arguments.preview {
+        match platform::Instance::acquire(arguments.settings)
+            .map_err(|e| eframe::Error::AppCreation(e.into()))?
+        {
+            Some(instance) => Some(instance),
+            None => {
+                diagnostics::event("Application already running; duplicate launch ignored");
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(windows)]
+    if !preview && !arguments.worker {
+        match desktop::supervisor::run(&arguments) {
             Ok(status) => std::process::exit(status.code().unwrap_or(1)),
             Err(error) => {
                 diagnostics::event(&format!("Cannot start wallpaper renderer: {error}"));
@@ -53,19 +75,30 @@ fn run() -> eframe::Result {
         }
         default_surface_error(error)
     });
-    diagnostics::event(if preview {
+    diagnostics::event(if arguments.settings {
+        "Starting settings"
+    } else if preview {
         "Starting preview"
     } else {
         "Starting wallpaper renderer"
     });
     diagnostics::event(if opengl {
-        "Requested renderer: OpenGL (comparison mode)"
+        "Requested renderer: OpenGL"
     } else {
         "Requested renderer: wgpu"
     });
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_title("Time Flows Away — Preview")
-        .with_inner_size([1100.0, 750.0]);
+        .with_title(if arguments.settings {
+            "Time Flows Away — Settings"
+        } else {
+            "Time Flows Away — Preview"
+        })
+        .with_inner_size([1100.0, 750.0])
+        .with_min_inner_size(if arguments.settings {
+            [800.0, 600.0]
+        } else {
+            [200.0, 150.0]
+        });
     #[cfg(windows)]
     let viewport = if preview {
         viewport
@@ -93,6 +126,13 @@ fn run() -> eframe::Result {
     eframe::run_native(
         "Time Flows Away",
         options,
-        Box::new(move |cc| Ok(Box::new(app::WallpaperApp::new(cc, preview)))),
+        Box::new(move |cc| {
+            app::log_adapter(cc);
+            if arguments.settings {
+                Ok(Box::new(settings::SettingsApp::new(cc, arguments)))
+            } else {
+                Ok(Box::new(app::WallpaperApp::new(cc, arguments)))
+            }
+        }),
     )
 }

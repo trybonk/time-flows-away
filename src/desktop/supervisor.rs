@@ -6,14 +6,12 @@ use std::{
     time::Duration,
 };
 pub const SHELL_LOST: i32 = 75;
-pub fn run() -> std::io::Result<ExitStatus> {
+pub fn run(options: &crate::options::Options) -> std::io::Result<ExitStatus> {
     let executable = std::env::current_exe()?;
     loop {
         let mut worker = Command::new(&executable);
         worker.arg("--wallpaper-worker");
-        if std::env::args().any(|arg| arg == "--opengl") {
-            worker.arg("--opengl");
-        }
+        worker.args(options.child_args());
         let status = worker.status()?;
         if status.code() != Some(SHELL_LOST) {
             return Ok(status);

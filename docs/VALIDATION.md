@@ -1,12 +1,23 @@
-# MVP validation
+# Validation
 
-Validated in the Codex Linux cloud environment using Rust 1.99.0 and the committed
-Cargo.lock. The first Windows feedback identified corner/size changes at startup,
-a persistent console, and a brief appearance over other windows. The subsequent
-manual report confirms the startup and console fixes and most desktop checks.
-It also identifies a remaining post-startup flash and a one-second black
-background. Results and log evidence are recorded below; full Windows desktop
-acceptance remains **pending resolution of those visual issues**.
+The latest user comparison on Windows 11 25H2 / RTX 3060 reports that the
+observed flashes **seem to have disappeared with OpenGL**. Two OpenGL starts
+were logged at 16:58:37 and 17:00:33 on 2026-10-10, both NVIDIA OpenGL 3.3.0,
+driver 616.64, with successful initial placement and normal style guards.
+This is a user observation on one PC; the excerpt does not establish prolonged
+stability, the original flash mechanism or a separate resolution of the earlier
+one-second black background. OpenGL is now the Windows default; --wgpu retains
+DX12 for comparison.
+
+The settings/tray release needs its own Windows acceptance pass. Cloud compilation
+and Linux rendering do not validate Windows tray, file picker, single-instance
+behavior or desktop composition. See SETTINGS-CHECKLIST.md.
+
+## Prior MVP cloud checks
+
+The following table records validation before the settings/tray increment, using
+Rust 1.99.0 and the then-committed Cargo.lock. The original startup/corner-frame
+and console faults were corrected; later DX12 flashes prompted the comparison.
 
 | Check | Result |
 |---|---|
@@ -38,7 +49,7 @@ as an executed Windows smoke test.
 Not executed in the cloud: Windows 11 24H2+ composition/layering, icons visible/hidden,
 Explorer restart, Win+D, DPI/resolution changes, wallpaper-mode shutdown, or
 CPU/RAM/GPU measurements. The exact checklist and known DX12/layered-window risk
-are in README.md. Settings, tray, autorun and multi-monitor features are not part
+are in DEVELOPMENT.md. Settings, tray, autorun and multi-monitor features are not part
 of this MVP.
 
 ## User's Windows acceptance report — 2026-10-10
@@ -117,3 +128,41 @@ passed after relocation and addition of the comparison mode. The OpenGL preview
 check waits for actual rendered pixels rather than assuming the first software
 shader compilation finishes within two seconds. Windows runtime comparison
 remains pending.
+
+## Settings and tray increment — 0.2.0
+
+Windows now defaults to OpenGL and retains --wgpu for DX12 comparison. Stage 4
+adds an English settings window with explicit Save, live preview, versioned TOML,
+colors/fonts/layout/date/time/background and countdown/elapsed controls. The
+first stage 5 increment adds a worker-owned tray, pause/resume and session-local
+wallpaper/settings instance guards. Autorun and multi-monitor selection remain
+for later work.
+
+Cloud checks on this increment:
+
+| Check | Result |
+|---|---|
+| Formatting and Clippy | Passed on Linux and Windows GNU, all targets |
+| Linux tests | 16 passed; 0 failed/ignored (clock, relative order, settings/storage/timer, CLI forwarding) |
+| Release builds | Linux and Windows GNU x64 cross-builds passed |
+| English settings UI, actual OpenGL/Xvfb rendering | Edited heading in the input, confirmed draft did not write a file, Ctrl+S saved it, live preview rendered |
+| Pause / resume | Clock-region pixels stayed fixed while paused and changed after resume |
+| Config reload | A changed solid color rendered; invalid TOML preserved that color and the invalid file; corrected settings reloaded |
+| Assets and timer | PNG background, custom DejaVu font and enabled countdown rendered; missing PNG fell back to solid background without a crash |
+| Preview shutdown | Esc exited with status 0 |
+| PE inspection | Windows GUI subsystem; imports Windows system DLLs, including OpenGL and native-dialog/tray dependencies; no extra MinGW runtime DLL |
+| Legacy and attribution | legacy/wallpaper-engine, LICENSE and NOTICE unchanged from the preceding branch |
+
+The settings helper uses its own file under
+/workspace/artifacts/time-flows-away/settings/. It waits for a mapped window
+before X11 input and for rendered pixels when software OpenGL needs extra time.
+This avoids treating a title/PID or a fixed shader-compilation delay as readiness.
+Config polling now requests its own repaint deadline, avoiding an extra delay
+from rounding the two-second check to a one-second clock tick.
+
+These are Linux GUI checks and Windows cross-compilation. Windows MSVC CI must
+complete on the new feature branch. Windows tray/menu callbacks, native file
+picker, duplicate-launch guards, OpenGL desktop layering, Explorer recovery with
+a tray, and performance of this release require the user's PC checks in
+SETTINGS-CHECKLIST.md. The older Windows report is useful baseline evidence;
+it does not certify the settings/tray build.

@@ -1,6 +1,6 @@
-# Time Flows Away — native Windows MVP
+# Time Flows Away — native Windows development
 
-Rust edition 2024, egui/eframe + wgpu, with an optional OpenGL comparison backend.
+Rust edition 2024, egui/eframe + OpenGL on Windows; optional wgpu/DX12 diagnostics.
 No browser and no Wallpaper Engine.
 Licensed under the root Apache-2.0 LICENSE; see ../NOTICE for attribution.
 The original `../legacy/wallpaper-engine/src/` files remain the implementation reference.
@@ -28,16 +28,22 @@ ten seconds; a new error kind is recorded immediately. Preview is a normal windo
 **Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Use the chord for orderly detachment; closing a terminal is no longer necessary.
 No administrator privileges are required.
 
-To compare the remaining flashes with a non-DX12 rendering path, close the
-existing copy and run `time-flows-away-native.exe --opengl`. This flag is forwarded
-to the renderer after an Explorer restart; the log identifies the selected
-renderer and OpenGL device/version. The same UI, desktop hierarchy, style guards
-and exit controls are used. `--preview --opengl` opens its window preview.
-DX12 remains the Windows default. Windows OpenGL desktop acceptance is pending;
-this switch provides a reproducible comparison rather than a verified flash fix.
+Windows now uses OpenGL by default after the user's RTX 3060 comparison reported
+that the observed flashes disappeared. Run with `--wgpu` to compare DX12;
+`--opengl` explicitly selects the default. Renderer/config arguments are forwarded
+through Explorer recovery and to the separate settings process. This observation
+on one PC does not prove stability on all Windows configurations.
+
+`--settings` opens the English settings window. A worker-owned tray provides
+Settings, Pause/Resume and Quit; double-click opens Settings. Preview uses Space
+to pause. Settings changes are previewed locally and saved explicitly to
+`%LOCALAPPDATA%\TimeFlowsAway\config.toml`. Wallpaper checks the file every two
+seconds, keeping its last valid state if TOML/values are invalid. Saves write a
+unique temporary file, sync it and replace the destination. The settings file is
+not created until Save. See [settings manual checks](SETTINGS-CHECKLIST.md).
 
 The GitHub Actions workflow `Windows build` runs formatting, Clippy, tests,
-and a release build on Windows for pull requests, pushes to the feature branch
+and a release build on Windows for pull requests, pushes to `feat/**`
 or master, and manual dispatch. Download `time-flows-away-windows-x64` from the
 run's artifacts and extract the executable. CI compilation does **not** test
 desktop embedding. Commands run from the repository root; binaries are under
@@ -48,11 +54,16 @@ desktop embedding. Commands run from the repository root; binaries are under
 - `wallpaper/clock.rs`: pure local calendar calculations and six boundary tests.
 - `wallpaper/render.rs`: date, time, two date progress bars, three time bars,
   Chinese heading and English footer. One scheduled clock update per second.
-- `app.rs`: event-driven lifecycle, system font loaded once, preview status.
+- `app.rs`: event-driven lifecycle, config refresh, pause state and preview status.
+- `config.rs`: versioned TOML settings, validation, atomic save and last-valid reload.
+- `assets.rs`: bounded PNG/JPEG decode and validated font loading on path changes.
+- `settings.rs`: independent egui window, unsaved draft, live preview and explicit Save.
+- `tray.rs`: Windows worker-owned tray; menu callbacks wake egui without busy polling.
+- `platform.rs`: session-local instance guards and the native file picker.
 - `diagnostics.rs`: errors and actual placement changes recorded without a console.
 - `desktop/windows.rs`: borrowed Shell HWND discovery, checked style/parent/
   placement calls, one-second bounded Shell message, geometry and layer checks.
-  All unsafe Win32 calls are isolated here. Only our window is modified.
+  Desktop unsafe Win32 calls are isolated here. Only our window is modified.
 - `desktop/supervisor.rs`: wallpaper mode starts a renderer child process.
   eframe cannot rebuild an externally destroyed root HWND in place. A sleeping
   lifetime-monitor thread in the renderer detects a lost/recycled HWND and exits
@@ -77,7 +88,7 @@ our window. Runtime repairs neither activate nor show the window, and frame
 changes are only requested after style changes. Normal shutdown detaches hidden.
 
 The initial viewport is sized to the primary display before eframe configures
-its wgpu surface. Attachment preserves eframe's hidden state until the first
+its rendering surface. Attachment preserves eframe's hidden state until the first
 painted frame. A subclass of our own HWND preserves child/layered/nonactivating
 styles when winit re-applies cached window styles on first show, and prevents
 its unrelated position updates from raising the wallpaper. The subclass is
@@ -112,7 +123,7 @@ Bars step once per second instead of the CSS continuous one-second transition.
 The layout uses centered baselines adjusted against the supplied Wallpaper Engine
 reference screenshot and uniformly shrinks on small previews;
 it is not a pixel-identical CSS layout. With a solid background the panel is the
-same color as the page, so its rounded outline is invisible and is omitted.
+same color as the page, so its rounded outline is invisible.
 Windows Microsoft JhengHei bold is loaded from the system once, falling back to
 JhengHei/YaHei then egui fonts; Linux preview uses a local Noto Sans CJK font.
 Missing CJK fonts may show missing glyphs.
@@ -122,13 +133,18 @@ Both the GPU clear color and the painted panel use the same opaque #161616
 background. This avoids eframe's different translucent default clear color;
 it does not establish the cause of any transient compositor flash.
 
-Original properties identified for later stages: colors, position, sizes, 12/24h,
-weekday, date/time formats, headings, font, background file, text-mask opacity,
-and anniversary/countdown with day/detail/very-detail modes, prefix and suffix.
-These are deliberately not configurable in MVP. TOML settings, tray, autorun,
-single-instance enforcement and multi-monitor rendering are out of scope until
-the Windows integration is validated. A user's sleep/wake check passed without
-dedicated handling; broad hardware coverage is still unverified.
+Stage 4 settings now expose colors, position, text/bar sizes, 12/24h presets,
+weekday, date/time formats, headings, font, background image and panel opacity,
+plus countdown/elapsed display in days, detailed time or seconds. Countdown uses
+local civil time rather than UTC elapsed time across DST. System CJK fonts are
+registered for wallpaper text; the settings UI keeps egui's normal fonts.
+
+The first part of stage 5 provides a tray and session-local single-instance guards
+for wallpaper and settings; preview is independent. No autorun registration or
+multi-monitor rendering is implemented. Pausing freezes the sampled clock while
+maintenance/config checks continue every two seconds. Pause is temporary and
+resets after a renderer restart. Normal running requests one repaint per second;
+interactive egui events can request additional paints.
 
 ## Windows manual acceptance checklist (not run in Linux)
 
@@ -163,7 +179,8 @@ establish correct composition. If seen, stop acceptance and investigate a native
 D3D11/DXGI blit renderer or a verified Shell-compatible surface path. No D3D11
 fallback is implemented yet. Explorer destruction/recreation timing, DPI-awareness
 compatibility with SetParent, click-through and icon-hidden hierarchy changes
-also require these manual tests. Stage 2 acceptance is pending that evidence.
+also require these manual tests. The latest user OpenGL comparison is recorded in VALIDATION.md; prolonged
+observation and stage 4/5 Windows checks remain pending.
 
 Current automatic results are recorded in VALIDATION.md; they are separate from
 this manual checklist and do not certify Windows desktop behavior.
