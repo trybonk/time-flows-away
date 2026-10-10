@@ -25,6 +25,7 @@ and the renderer, which can be restarted after Explorer recreates the desktop.
 |---|---|---|
 | Desktop wallpaper | Double-click the EXE | Hold **Ctrl+Alt+Shift+Q** for at least one second |
 | Window preview | `time-flows-away-native.exe --preview` | **Esc** |
+| OpenGL comparison | `time-flows-away-native.exe --opengl` | Hold **Ctrl+Alt+Shift+Q** for at least one second |
 
 The application opens without a console. Diagnostics are written to
 `%LOCALAPPDATA%\TimeFlowsAway\app.log`. For a visual fault, include this log,
@@ -74,6 +75,10 @@ Progress bars update once per second. Settings, tray controls, autorun,
 single-instance protection, and multi-monitor rendering are planned after the
 Windows MVP is stable. A brief post-startup flash and a one-second black
 background reported on Windows remain open; the current build adds diagnostics.
+The optional `--opengl` flag uses the same UI and desktop attachment with another
+rendering backend, to compare the reported flashes against the default DX12 path.
+It can also be combined with `--preview`; it is not an automatic fallback or a
+verified fix for Windows composition.
 
 Read [development and manual testing](docs/DEVELOPMENT.md) for implementation
 details, platform limitations, and the Windows acceptance checklist.

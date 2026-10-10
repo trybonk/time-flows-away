@@ -13,6 +13,7 @@ fn main() -> eframe::Result {
 
 fn run() -> eframe::Result {
     let preview = std::env::args().any(|arg| arg == "--preview");
+    let opengl = std::env::args().any(|arg| arg == "--opengl");
     #[cfg(windows)]
     if !preview && !std::env::args().any(|arg| arg == "--wallpaper-worker") {
         match desktop::supervisor::run() {
@@ -57,6 +58,11 @@ fn run() -> eframe::Result {
     } else {
         "Starting wallpaper renderer"
     });
+    diagnostics::event(if opengl {
+        "Requested renderer: OpenGL (comparison mode)"
+    } else {
+        "Requested renderer: wgpu"
+    });
     let viewport = eframe::egui::ViewportBuilder::default()
         .with_title("Time Flows Away — Preview")
         .with_inner_size([1100.0, 750.0]);
@@ -76,7 +82,11 @@ fn run() -> eframe::Result {
         } else {
             Some(Box::new(desktop::wallpaper_viewport))
         },
-        renderer: eframe::Renderer::Wgpu,
+        renderer: if opengl {
+            eframe::Renderer::Glow
+        } else {
+            eframe::Renderer::Wgpu
+        },
         wgpu_options,
         ..Default::default()
     };

@@ -22,6 +22,18 @@ impl WallpaperApp {
                 state.target_format
             ));
         }
+        if let Some(gl) = &cc.gl {
+            use eframe::glow::HasContext;
+            // eframe has made this app's GL context current on the UI thread.
+            unsafe {
+                crate::diagnostics::event(&format!(
+                    "OpenGL adapter: renderer={} vendor={} version={}",
+                    gl.get_parameter_string(eframe::glow::RENDERER),
+                    gl.get_parameter_string(eframe::glow::VENDOR),
+                    gl.get_parameter_string(eframe::glow::VERSION)
+                ));
+            }
+        }
         // System fonts stay on the user's machine; load once, never each frame.
         for path in system_fonts() {
             if let Ok(bytes) = std::fs::read(path) {

@@ -17,6 +17,7 @@ acceptance remains **pending resolution of those visual issues**.
 | `cargo clippy --locked --target x86_64-pc-windows-gnu --all-targets -- -D warnings` | Passed, including Win32 module and supervisor |
 | Windows GNU x64 release build | Cross-compiled; this does not prove Windows runtime behavior |
 | Release Linux preview in Xvfb + Mesa Vulkan | Rendered background and all 5 bar colors; clock pixels changed; Esc exited with code 0 |
+| Optional OpenGL Linux preview | Mesa llvmpipe OpenGL 4.5; same background/bar pixel checks, changing clock and Esc exit passed |
 | Frozen setup script replay | Local pinned Rust and extracted Debian tools; release build steps repeatable |
 | GitHub Actions workflow | Initial MVP and startup follow-up Windows MSVC runs succeeded; diagnostic follow-up requires its own run |
 | Window style regression tests | Two Windows-only tests compiled locally and ran in the successful startup follow-up Windows CI; diagnostic follow-up CI pending |
@@ -99,3 +100,20 @@ styles retained child/nonactivating/layered behavior. The user reports that
 flashes remain. No surface errors or subsequent placement events are present
 in the supplied excerpt. Matching clear colors did not resolve the reported
 flash, and this log does not establish a specific driver/compositor fault.
+
+The next diagnostic step adds an opt-in `--opengl` backend using eframe/glow in
+the same executable. Clock/layout, desktop attachment and lifecycle remain
+shared; the supervisor preserves the flag when restarting its child. DX12 is
+still the default. Windows OpenGL composition and the effect on flashes must
+be tested manually; availability of this mode alone does not establish a fix.
+
+The Rust package is now at the repository root. Native source files were
+relocated without content changes in the structure commit, and original web
+files/preview/README were verified byte-for-byte under legacy/wallpaper-engine/.
+The CI workflow now runs root Cargo commands and packages root documents and
+docs/. Root metadata, documentation links, formatting, ten Linux tests, Linux
+and Windows GNU Clippy, both release builds, and both Linux preview backends
+passed after relocation and addition of the comparison mode. The OpenGL preview
+check waits for actual rendered pixels rather than assuming the first software
+shader compilation finishes within two seconds. Windows runtime comparison
+remains pending.

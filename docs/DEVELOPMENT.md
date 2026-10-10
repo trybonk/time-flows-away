@@ -1,6 +1,7 @@
 # Time Flows Away — native Windows MVP
 
-Rust edition 2024, egui/eframe + wgpu, no browser and no Wallpaper Engine.
+Rust edition 2024, egui/eframe + wgpu, with an optional OpenGL comparison backend.
+No browser and no Wallpaper Engine.
 Licensed under the root Apache-2.0 LICENSE; see ../NOTICE for attribution.
 The original `../legacy/wallpaper-engine/src/` files remain the implementation reference.
 
@@ -26,6 +27,14 @@ visibility events. Identical surface errors are rate-limited to one entry per
 ten seconds; a new error kind is recorded immediately. Preview is a normal window; Esc closes it. In wallpaper mode hold
 **Ctrl+Alt+Shift+Q for at least one second** to close gracefully. Use the chord for orderly detachment; closing a terminal is no longer necessary.
 No administrator privileges are required.
+
+To compare the remaining flashes with a non-DX12 rendering path, close the
+existing copy and run `time-flows-away-native.exe --opengl`. This flag is forwarded
+to the renderer after an Explorer restart; the log identifies the selected
+renderer and OpenGL device/version. The same UI, desktop hierarchy, style guards
+and exit controls are used. `--preview --opengl` opens its window preview.
+DX12 remains the Windows default. Windows OpenGL desktop acceptance is pending;
+this switch provides a reproducible comparison rather than a verified flash fix.
 
 The GitHub Actions workflow `Windows build` runs formatting, Clippy, tests,
 and a release build on Windows for pull requests, pushes to the feature branch
@@ -117,8 +126,9 @@ Original properties identified for later stages: colors, position, sizes, 12/24h
 weekday, date/time formats, headings, font, background file, text-mask opacity,
 and anniversary/countdown with day/detail/very-detail modes, prefix and suffix.
 These are deliberately not configurable in MVP. TOML settings, tray, autorun,
-single-instance enforcement, multi-monitor rendering, and sleep/wake support are
-out of scope until the Windows integration is validated.
+single-instance enforcement and multi-monitor rendering are out of scope until
+the Windows integration is validated. A user's sleep/wake check passed without
+dedicated handling; broad hardware coverage is still unverified.
 
 ## Windows manual acceptance checklist (not run in Linux)
 
@@ -144,7 +154,8 @@ Use Windows 11 **24H2 or newer** and record the build number and GPU/driver:
 7. Hold Ctrl+Alt+Shift+Q for >=1s. Both supervisor and renderer should exit, no
    leftover window or desktop artifacts, no modified wallpaper setting.
 8. Observe CPU/RAM/GPU in Task Manager for at least 60 seconds at idle and report
-   both processes together. No performance figures have been measured on Windows.
+   both processes together. The user's current measurements are recorded in
+   VALIDATION.md; no independent cloud Windows measurements are available.
 
 **Unverified risks:** DX12 flip-model presentation into a layered child on raised
 Shell may be black/invisible despite successful Win32 calls; compilation cannot

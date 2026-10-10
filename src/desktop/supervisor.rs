@@ -9,9 +9,12 @@ pub const SHELL_LOST: i32 = 75;
 pub fn run() -> std::io::Result<ExitStatus> {
     let executable = std::env::current_exe()?;
     loop {
-        let status = Command::new(&executable)
-            .arg("--wallpaper-worker")
-            .status()?;
+        let mut worker = Command::new(&executable);
+        worker.arg("--wallpaper-worker");
+        if std::env::args().any(|arg| arg == "--opengl") {
+            worker.arg("--opengl");
+        }
+        let status = worker.status()?;
         if status.code() != Some(SHELL_LOST) {
             return Ok(status);
         }
