@@ -14,6 +14,9 @@ pub struct SettingsApp {
     pacer: FramePacer,
     performance: crate::diagnostics::Performance,
     message: Option<String>,
+    closing: bool,
+    #[cfg(windows)]
+    startup_probe: std::time::Instant,
     #[cfg(windows)]
     lifetime: Option<crate::platform::SettingsLifetime>,
     #[cfg(windows)]
@@ -39,9 +42,17 @@ impl SettingsApp {
             assets,
             pacer: FramePacer::default(),
             message: store.error,
+            closing: false,
+            #[cfg(windows)]
+            startup_probe: std::time::Instant::now(),
         }
     }
     fn save(&mut self) {
+        if self.assets.loading() {
+            self.message =
+                Some("Background is still loading. Save when the preview is ready.".into());
+            return;
+        }
         if let Some(error) = self.assets.error() {
             self.message = Some(error);
             return;
@@ -68,8 +79,34 @@ impl eframe::App for SettingsApp {
             .as_ref()
             .is_some_and(|lifetime| lifetime.finished())
         {
+            if !self.closing {
+                crate::diagnostics::event("Exit: reason=owner_exit role=settings");
+                self.closing = true;
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
+        }
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
+            crate::diagnostics::event("Exit: reason=window_close role=settings");
+            self.closing = true;
+        }
+        self.performance.state(
+            if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+                "active"
+            } else {
+                "inactive"
+            },
+            if ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+                self.draft.animation_fps
+            } else {
+                0
+            },
+            &self.assets.text,
+        );
+        #[cfg(windows)]
+        if self.startup_probe.elapsed().as_secs() >= 2 {
+            self.startup = crate::platform::autostart::status(&self.options);
+            self.startup_probe = std::time::Instant::now();
         }
         self.assets.sync(ctx, &self.draft);
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
@@ -103,6 +140,9 @@ impl eframe::App for SettingsApp {
             ui.add_space(8.0);
         });
         egui::TopBottomPanel::bottom("settings-status").show(ctx, |ui| {
+            if self.assets.loading() {
+                ui.small("Loading background…");
+            }
             if let Some(error) = self.draft.validate().err().or_else(|| self.assets.error()) {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             }
@@ -123,9 +163,10 @@ impl eframe::App for SettingsApp {
                     #[cfg(windows)]
                     egui::CollapsingHeader::new("System").show(ui, |ui| {
                         if let Ok(status) = &self.startup {
+                            if let Some(warning)=&status.warning {ui.colored_label(egui::Color32::YELLOW,warning);}
                             let mut enabled=status.enabled;
                             let changed=ui.checkbox(&mut enabled, "Start with Windows").changed();
-                            let refresh=status.enabled && !status.current && ui.button("Use current application location").clicked();
+                            let refresh=status.enabled && (!status.current || status.warning.is_some()) && ui.button("Use current application location").clicked();
                             if changed || refresh {
                                 match crate::platform::autostart::set(enabled, &self.options) {
                                     Ok(()) => {

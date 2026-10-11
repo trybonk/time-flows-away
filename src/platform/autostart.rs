@@ -148,9 +148,40 @@ fn write_at(path: &str, name: &str, value: Option<&[u16]>) -> Result<(), String>
         }
     }
 }
+fn registered_executable(command: &[u16]) -> Result<std::path::PathBuf, String> {
+    use windows_sys::Win32::{Foundation::LocalFree, UI::Shell::CommandLineToArgvW};
+    if command.is_empty() {
+        return Err("Empty startup command".into());
+    }
+    let line: Vec<u16> = command.iter().copied().chain(Some(0)).collect();
+    unsafe {
+        let mut count = 0;
+        let argv = CommandLineToArgvW(line.as_ptr(), &mut count);
+        if argv.is_null() {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let path = if count > 0 {
+            let first = *argv;
+            let mut length = 0;
+            while *first.add(length) != 0 {
+                length += 1;
+            }
+            use std::os::windows::ffi::OsStringExt;
+            Some(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+                std::slice::from_raw_parts(first, length),
+            )))
+        } else {
+            None
+        };
+        LocalFree(argv.cast());
+        path.filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| "Startup command has no executable".into())
+    }
+}
 pub struct Status {
     pub enabled: bool,
     pub current: bool,
+    pub warning: Option<String>,
 }
 pub fn status(options: &Options) -> Result<Status, String> {
     let saved = read_at(RUN, NAME)?;
@@ -158,7 +189,22 @@ pub fn status(options: &Options) -> Result<Status, String> {
         &std::env::current_exe().map_err(|e| e.to_string())?,
         options,
     )?;
+    let warning = saved
+        .as_ref()
+        .and_then(|line| match registered_executable(line) {
+            Ok(path) if !path.is_file() => Some(format!(
+                "Startup executable was moved or removed: {}",
+                path.display()
+            )),
+            Ok(_) if saved.as_ref() != Some(&expected) => Some(
+                "Startup uses another application location or settings. Update it to use this EXE."
+                    .into(),
+            ),
+            Ok(_) => None,
+            Err(error) => Some(format!("Invalid startup registration: {error}")),
+        });
     Ok(Status {
+        warning,
         enabled: saved.is_some(),
         current: saved.as_ref() == Some(&expected),
     })
@@ -178,6 +224,17 @@ pub fn set(enabled: bool, options: &Options) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registered_path_parsing_keeps_spaces_unicode_and_backslashes() {
+        let exe = Path::new(r"C:\Папка с пробелом\app.exe");
+        let line = command(
+            exe,
+            &Options::parse(["--config", r"C:\settings.toml"].map(Into::into)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(registered_executable(&line).unwrap(), exe);
+        assert!(registered_executable(&[]).is_err());
+    }
     #[test]
     fn startup_preserves_unicode_paths_and_excludes_internal_worker_flags() {
         use windows_sys::Win32::{Foundation::LocalFree, UI::Shell::CommandLineToArgvW};

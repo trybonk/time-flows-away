@@ -1,5 +1,6 @@
 //! Render through Windows' color-font support, without a visible helper window
 //! or an additional GPU surface. Only the font factory is retained between decodes.
+pub(super) mod glyphs;
 use eframe::egui;
 use windows::{
     Win32::{

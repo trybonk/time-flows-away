@@ -1,10 +1,14 @@
 //! Cached fonts and backgrounds sized to the physical viewport.
+mod background;
 use eframe::egui;
 use std::path::PathBuf;
 use time_flows_away_native::config::Config;
 pub struct Assets {
     image_path: Option<String>,
+    loader: Option<background::Worker>,
+    loading: bool,
     font_path: Option<String>,
+    text_sizes: Option<[f32; 5]>,
     font_flags: (bool, bool),
     settings: bool,
     image_size: [u32; 2],
@@ -19,7 +23,10 @@ impl Assets {
     pub fn new() -> Self {
         Self {
             image_path: None,
+            loader: None,
+            loading: false,
             font_path: None,
+            text_sizes: None,
             font_flags: (false, false),
             settings: false,
             image_size: [0; 2],
@@ -42,10 +49,21 @@ impl Assets {
     }
     pub fn prepare(&mut self, ctx: &egui::Context, c: &Config) {
         // CreationContext has not received the real viewport yet. Load the
-        // background in the first update, before eframe shows its first frame.
+        // background after the first update, once physical size is known.
         self.sync_inner(ctx, c, false);
     }
     fn sync_inner(&mut self, ctx: &egui::Context, c: &Config, images: bool) {
+        let sizes = [
+            c.header_size,
+            c.date_size,
+            c.time_size,
+            c.footer_size,
+            c.countdown_size,
+        ];
+        if self.text_sizes != Some(sizes) {
+            self.text.reset();
+            self.text_sizes = Some(sizes);
+        }
         self.text.high_quality = c.high_quality_text;
         let size = ctx.input(|i| i.viewport_rect().size()) * ctx.pixels_per_point();
         let image_size = [size.x.ceil().max(1.0) as u32, size.y.ceil().max(1.0) as u32];
@@ -73,13 +91,42 @@ impl Assets {
             self.resize_pending = None;
             self.image_size = image_size;
             self.image_path = Some(c.background_image.clone());
-            self.texture = None;
             self.image_error = None;
-            if !c.background_image.is_empty() {
-                match load_image(ctx, &c.background_image, image_size) {
-                    Ok(texture) => self.texture = Some(texture),
-                    Err(e) => self.image_error = Some(e),
+            if c.background_image.is_empty() {
+                if let Some(loader) = &self.loader {
+                    loader.submit(None);
                 }
+                self.texture = None;
+                self.loading = false;
+            } else {
+                if self.loader.is_none() {
+                    match background::Worker::new(ctx.clone()) {
+                        Ok(loader) => self.loader = Some(loader),
+                        Err(error) => self.image_error = Some(error),
+                    }
+                }
+                if let Some(loader) = &self.loader {
+                    self.loading = true;
+                    loader.submit(Some(background::Job {
+                        path: c.background_image.clone(),
+                        viewport: image_size,
+                        max: ctx.input(|i| i.max_texture_side).min(4096) as u32,
+                    }));
+                }
+            }
+        }
+        if let Some(result) = self.loader.as_ref().and_then(|loader| loader.take()) {
+            self.loading = false;
+            match result {
+                Ok(image) => {
+                    self.texture = Some(ctx.load_texture(
+                        "wallpaper-background",
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                    self.image_error = None;
+                }
+                Err(error) => self.image_error = Some(error),
             }
         }
         let flags = if self.settings {
@@ -171,6 +218,9 @@ impl Assets {
             ctx.set_fonts(definitions);
         }
     }
+    pub fn loading(&self) -> bool {
+        self.loading
+    }
     pub fn error(&self) -> Option<String> {
         self.image_error.clone().or_else(|| self.font_error.clone())
     }
@@ -183,52 +233,6 @@ fn font_bytes(path: &std::path::Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     ttf_parser::Face::parse(&bytes, 0).map_err(|e| format!("Invalid font: {e:?}"))?;
     Ok(bytes)
-}
-fn load_image(
-    ctx: &egui::Context,
-    path: &str,
-    viewport: [u32; 2],
-) -> Result<egui::TextureHandle, String> {
-    let mut reader = image::ImageReader::open(path)
-        .map_err(|e| e.to_string())?
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(256 * 1024 * 1024);
-    reader.limits(limits);
-    let mut image = reader.decode().map_err(|e| e.to_string())?;
-    let ratio = viewport[0] as f32 / viewport[1] as f32;
-    let source = image.width() as f32 / image.height() as f32;
-    // Crop to the visible cover area before filtering. An ultra-wide source
-    // should not stay huge merely to cover a normal desktop.
-    if source > ratio {
-        let width = (image.height() as f32 * ratio).round().max(1.0) as u32;
-        image = image.crop_imm((image.width() - width) / 2, 0, width, image.height());
-    } else {
-        let height = (image.width() as f32 / ratio).round().max(1.0) as u32;
-        image = image.crop_imm(0, (image.height() - height) / 2, image.width(), height);
-    }
-    let max = ctx.input(|i| i.max_texture_side).min(4096) as u32;
-    let scale = (viewport[0] as f32 / image.width() as f32)
-        .min(viewport[1] as f32 / image.height() as f32)
-        .min(max as f32 / image.width().max(image.height()) as f32)
-        .min(1.0);
-    if scale < 1.0 {
-        image = image.resize_exact(
-            (image.width() as f32 * scale).round().max(1.0) as u32,
-            (image.height() as f32 * scale).round().max(1.0) as u32,
-            image::imageops::FilterType::Lanczos3,
-        );
-    }
-    let rgba = image.to_rgba8();
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    Ok(ctx.load_texture(
-        "wallpaper-background",
-        egui::ColorImage::from_rgba_unmultiplied(size, &rgba),
-        egui::TextureOptions::LINEAR,
-    ))
 }
 fn system_fonts() -> Vec<PathBuf> {
     #[cfg(windows)]

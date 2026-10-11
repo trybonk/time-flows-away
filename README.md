@@ -21,7 +21,7 @@ its installed system fonts.*
   weekday, and progress through the year, month, day, hour, and minute.
 - **Your text and style** — custom heading/footer, color emoji, fonts, text sizes,
   colors, bar dimensions, alignment, and offsets.
-- **Backgrounds** — solid colors or PNG/JPEG images, with a configurable panel
+- **Backgrounds** — solid colors or PNG/JPEG images loaded in the background, with a configurable panel
   color and opacity.
 - **Countdown and elapsed time** — track a future date or time since a past event,
   in days, detailed time, or seconds.

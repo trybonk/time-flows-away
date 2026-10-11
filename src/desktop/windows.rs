@@ -373,6 +373,7 @@ pub struct Desktop {
     session_notification: bool,
     closing: bool,
     subclassed: bool,
+    exit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     monitor: Option<(std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>)>,
 }
 impl Desktop {
@@ -400,6 +401,7 @@ impl Desktop {
                 power_notification: 0,
                 session_notification: false,
                 monitor: None,
+                exit: Default::default(),
                 closing: false,
                 subclassed: false,
             };
@@ -415,23 +417,40 @@ impl Desktop {
                     "Power/session notification unavailable; using desktop visibility polling",
                 );
             }
-            if std::env::args().any(|arg| arg == "--wallpaper-worker") {
+            {
+                let worker = std::env::args().any(|arg| arg == "--wallpaper-worker");
+                let exit = desktop.exit.clone();
                 let (stop, receiver) = std::sync::mpsc::channel();
                 let handle = hwnd as usize;
                 let ctx = cc.egui_ctx.clone();
-                // Needed only because an externally destroyed HWND receives no repaint.
+                // Observe hold/release without forcing GPU frames; also detect a destroyed HWND.
                 let monitor = std::thread::Builder::new()
                     .name("shell-lifetime".into())
                     .spawn(move || {
                         let mut display = PrimaryDisplay::read().ok();
                         let mut last = Instant::now();
+                        let mut hold = super::hold::Hold::default();
                         while matches!(
-                            receiver.recv_timeout(Duration::from_secs(1)),
+                            receiver.recv_timeout(Duration::from_millis(50)),
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
                         ) {
-                            if !owns(handle as HWND) {
+                            let down = [VK_CONTROL, VK_MENU, VK_SHIFT, 0x51]
+                                .iter()
+                                .all(|key| GetAsyncKeyState(i32::from(*key)) < 0);
+                            if hold.update(down, Instant::now()) {
+                                exit.store(true, Ordering::Relaxed);
+                                ctx.request_repaint();
+                                break;
+                            }
+                            if last.elapsed() < Duration::from_secs(1) {
+                                continue;
+                            }
+                            if worker && !owns(handle as HWND) {
                                 // This renderer's HWND is already gone. OS teardown frees its
                                 // remaining GPU/process resources; the supervisor owns restart.
+                                crate::diagnostics::event(
+                                    "Exit: reason=shell_lost source=lifetime_monitor code=75",
+                                );
                                 std::process::exit(super::supervisor::SHELL_LOST);
                             }
                             let current = PrimaryDisplay::read().ok();
@@ -634,6 +653,9 @@ impl Desktop {
                 if std::env::args().any(|arg| arg == "--wallpaper-worker") {
                     // Recreate only our renderer. Do not restore a visible
                     // top-level window while Explorer is changing its layers.
+                    crate::diagnostics::event(
+                        "Exit: reason=shell_lost source=desktop_repair code=75",
+                    );
                     std::process::exit(super::supervisor::SHELL_LOST);
                 }
                 // Detach before discovery; never attach to an invalid/reused handle blindly.
@@ -685,14 +707,13 @@ impl Desktop {
     }
     pub fn prepare_close(&mut self) {
         self.closing = true;
+        if let Some((stop, monitor)) = self.monitor.take() {
+            let _ = stop.send(());
+            let _ = monitor.join();
+        }
     }
     pub fn exit_requested(&self) -> bool {
-        // Hold this chord for at least one second. No hooks, injected input or global registration.
-        unsafe {
-            [VK_CONTROL, VK_MENU, VK_SHIFT, 0x51]
-                .iter()
-                .all(|key| GetAsyncKeyState(i32::from(*key)) < 0)
-        }
+        self.exit.load(Ordering::Relaxed)
     }
     fn restore(&mut self, show_preview: bool) -> Result<(), String> {
         unsafe {
@@ -741,6 +762,7 @@ impl Drop for Desktop {
             }
         }
         if !self.closing && self.monitor.is_some() && !owns(self.hwnd) {
+            crate::diagnostics::event("Exit: reason=shell_lost source=desktop_drop code=75");
             std::process::exit(super::supervisor::SHELL_LOST);
         }
         if let Some((stop, monitor)) = self.monitor.take() {

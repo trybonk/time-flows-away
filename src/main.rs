@@ -12,12 +12,22 @@ mod tray;
 fn main() -> eframe::Result {
     #[cfg(windows)]
     std::panic::set_hook(Box::new(|panic| {
-        diagnostics::event(&format!("Application panic: {panic}"))
+        diagnostics::event(&format!("Exit: reason=panic details= {panic}"))
     }));
-    run().inspect_err(|error| diagnostics::event(&format!("Application failed: {error}")))
+    let result = run()
+        .inspect_err(|error| diagnostics::event(&format!("Exit: reason=error details= {error}")));
+    if result.is_ok() {
+        diagnostics::event("Event loop finished normally");
+    }
+    result
 }
 
 fn run() -> eframe::Result {
+    diagnostics::event(&format!(
+        "Build: version={} commit={}",
+        env!("CARGO_PKG_VERSION"),
+        env!("TFA_GIT_COMMIT")
+    ));
     let arguments = options::Options::parse(std::env::args_os().skip(1))
         .map_err(|e| eframe::Error::AppCreation(e.into()))?;
     let preview = arguments.preview || arguments.settings;
@@ -29,7 +39,7 @@ fn run() -> eframe::Result {
         {
             Some(instance) => Some(instance),
             None => {
-                diagnostics::event("Application already running; duplicate launch ignored");
+                diagnostics::event("Exit: reason=duplicate_instance");
                 return Ok(());
             }
         }

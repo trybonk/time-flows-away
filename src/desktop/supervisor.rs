@@ -21,7 +21,18 @@ pub fn run(options: &crate::options::Options) -> std::io::Result<ExitStatus> {
         let mut worker = Command::new(&executable);
         worker.arg("--wallpaper-worker");
         worker.args(options.child_args());
-        let status = worker.status()?;
+        let mut child = worker.spawn()?;
+        let pid = child.id();
+        crate::diagnostics::event(&format!("Renderer spawned: pid={pid}"));
+        let status = child.wait()?;
+        crate::diagnostics::event(&format!(
+            "Renderer exited: pid={pid} status={status} decision={}",
+            if status.code() == Some(SHELL_LOST) {
+                "restart_shell"
+            } else {
+                "stop"
+            }
+        ));
         if status.code() != Some(SHELL_LOST) {
             crate::platform::close_settings();
             return Ok(status);

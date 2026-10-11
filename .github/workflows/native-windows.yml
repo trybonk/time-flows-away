@@ -2,9 +2,9 @@ name: Windows build
 on:
   push:
     branches: [master, "feat/**"]
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/native-windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', '.github/workflows/native-windows.yml']
   pull_request:
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/native-windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', '.github/workflows/native-windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 2
+      TFA_BUILD_COMMIT: ${{ github.sha }}
       RUSTFLAGS: "-C target-feature=+crt-static"
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +32,12 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked
+      - name: Validate arithmetic and CSV with Windows PowerShell 5.1
+        shell: powershell
+        run: ./docs/Test-PerformanceHelpers.ps1
+      - name: Validate arithmetic and CSV with PowerShell 7
+        shell: pwsh
+        run: ./docs/Test-PerformanceHelpers.ps1
       - name: Validate performance measurement helper
         shell: pwsh
         run: |
@@ -42,7 +49,7 @@ jobs:
           # Hosted runners have no wallpaper GPU; skip cold GPU-counter discovery
           # so it cannot consume the short CPU/RAM measurement interval.
           ./docs/Measure-Performance.ps1 -DurationSeconds 4 -IntervalSeconds 1 -ProcessName pwsh -SkipGpu -Label helper-smoke -OutputPath $output
-          $samples = @(Import-Csv $output)
+          $samples = @(Import-Csv $output | Where-Object Role -eq TOTAL)
           if ($samples.Count -lt 2 -or [double]$samples[-1].WorkingSetMiB -le 0 -or $samples[-1].CPUPercent -eq '') {
             throw 'Performance helper did not collect process samples.'
           }
@@ -55,6 +62,15 @@ jobs:
           Copy-Item target/release/time-flows-away-native.exe target/dist/
           Copy-Item README.md, NOTICE, LICENSE target/dist/
           Copy-Item -Recurse docs target/dist/docs
+          $manifest = [ordered]@{
+            version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+            commit = $env:GITHUB_SHA
+            workflowRun = $env:GITHUB_RUN_ID
+            builtAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            executable = 'time-flows-away-native.exe'
+            sha256 = (Get-FileHash target/dist/time-flows-away-native.exe -Algorithm SHA256).Hash
+          }
+          $manifest | ConvertTo-Json | Set-Content target/dist/build-manifest.json -Encoding utf8
       - name: Upload Windows x64 executable
         uses: actions/upload-artifact@v4
         with:

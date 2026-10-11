@@ -228,15 +228,14 @@ pub fn default_path() -> PathBuf {
         .join("time-flows-away");
     base.join("config.toml")
 }
-pub fn read(path: &Path) -> Result<Config, String> {
-    let metadata = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if metadata.len() > 256 * 1024 {
-        return Err("Settings file exceeds 256 KiB".into());
-    }
-    let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let config: Config = toml::from_str(&text).map_err(|e| e.to_string())?;
+fn parse(bytes: &[u8]) -> Result<Config, String> {
+    let text = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+    let config: Config = toml::from_str(text).map_err(|e| e.to_string())?;
     config.validate()?;
     Ok(config)
+}
+pub fn read(path: &Path) -> Result<Config, String> {
+    parse(&contents(path)?)
 }
 pub fn save(path: &Path, config: &Config) -> Result<(), String> {
     use std::io::Write;
@@ -280,7 +279,8 @@ pub struct Store {
     pub path: PathBuf,
     pub current: Config,
     pub error: Option<String>,
-    stamp: Option<(SystemTime, u64)>,
+    snapshot: Result<Vec<u8>, String>,
+    pub revision: u64,
     probe: Instant,
 }
 impl Store {
@@ -288,38 +288,61 @@ impl Store {
         std::time::Duration::from_secs(2).saturating_sub(self.probe.elapsed())
     }
     pub fn new(path: PathBuf) -> Self {
+        let snapshot = contents(&path);
         let (current, error) = if path.exists() {
-            match read(&path) {
-                Ok(c) => (c, None),
-                Err(e) => (Config::default(), Some(e)),
+            match snapshot
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|bytes| parse(bytes))
+            {
+                Ok(config) => (config, None),
+                Err(error) => (Config::default(), Some(error)),
             }
         } else {
             (Config::default(), None)
         };
-        let stamp = stamp(&path);
         Self {
             path,
             current,
             error,
-            stamp,
-            probe: Instant::now(),
+            snapshot,
+            revision: 0,
+            // Share whole-second phase with the clock so idle mode need not
+            // wake separately for config checks. All elapsed checks stay monotonic.
+            probe: Instant::now()
+                - std::time::Duration::from_nanos(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos()
+                        .into(),
+                ),
         }
     }
     pub fn refresh(&mut self) -> bool {
-        if self.probe.elapsed().as_secs() < 2 {
+        let elapsed = self.probe.elapsed() + std::time::Duration::from_millis(10);
+        if elapsed.as_secs() < 2 {
             return false;
         }
-        self.probe = Instant::now();
-        let stamp = stamp(&self.path);
-        if stamp == self.stamp {
+        self.probe +=
+            std::time::Duration::from_secs(2) * (elapsed.as_secs() / 2).min(u32::MAX as u64) as u32;
+        let snapshot = contents(&self.path);
+        if snapshot == self.snapshot {
             return false;
         }
-        self.stamp = stamp;
-        match read(&self.path) {
+        self.snapshot = snapshot;
+        let parsed = self
+            .snapshot
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|bytes| parse(bytes));
+        match parsed {
             Ok(c) => {
+                let changed = self.current != c;
                 self.current = c;
                 self.error = None;
-                true
+                self.revision = self.revision.wrapping_add(1);
+                changed
             }
             Err(e) => {
                 self.error = Some(e);
@@ -328,14 +351,69 @@ impl Store {
         }
     }
 }
-fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
-    let m = fs::metadata(path).ok()?;
-    Some((m.modified().ok()?, m.len()))
+// Settings are small. Read the bytes, including on equal mtime/length, and
+// bound the allocation even if the file grows after the metadata check.
+fn contents(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(256 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 256 * 1024 {
+        return Err("Settings exceed 256 KiB".into());
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reload_detects_equal_metadata_in_place_and_atomic_replacement() {
+        let directory = std::env::temp_dir().join(format!(
+            "tfa-reload-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("config.toml");
+        fs::write(&path, "animation_fps = 30").unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let mut store = Store::new(path.clone());
+        for (fps, atomic) in [(60, false), (30, true)] {
+            let target = if atomic {
+                directory.join("replacement.toml")
+            } else {
+                path.clone()
+            };
+            fs::write(&target, format!("animation_fps = {fps}")).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&target)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .unwrap();
+            if atomic {
+                fs::rename(&target, &path).unwrap();
+            }
+            assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+            store.probe = Instant::now() - std::time::Duration::from_secs(3);
+            assert!(store.refresh());
+            assert_eq!(store.current.animation_fps, fps);
+        }
+        assert_eq!(store.revision, 2);
+        fs::write(&path, vec![b' '; 256 * 1024 + 1]).unwrap();
+        store.probe = Instant::now() - std::time::Duration::from_secs(3);
+        assert!(!store.refresh());
+        assert!(store.error.as_ref().unwrap().contains("256 KiB"));
+        assert_eq!(store.current.animation_fps, 30);
+        fs::remove_dir_all(directory).unwrap();
+    }
     #[test]
     fn defaults_roundtrip_and_partial_settings() {
         let c = Config::default();

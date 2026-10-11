@@ -1,69 +1,121 @@
-param(
-    [ValidateRange(2, 3600)][int]$DurationSeconds = 120,
-    [ValidateRange(1, 30)][int]$IntervalSeconds = 2,
+﻿param(
+    [ValidateRange(2, 7200)][int]$DurationSeconds = 120,
+    [ValidateRange(1, 30)][int]$IntervalSeconds = 1,
     [string]$Label = 'visible-30fps',
     [string]$ProcessName = 'time-flows-away-native',
     [string]$OutputPath = '.\performance.csv',
     [switch]$SkipGpu
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/Performance-Helpers.ps1"
 $rows = [System.Collections.Generic.List[object]]::new()
 $previous = @{}
-$previousAt = [DateTimeOffset]::Now
+$roles = @{}
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$previousAt = 0.0
 $logicalProcessors = [Environment]::ProcessorCount
-$until = $previousAt.AddSeconds($DurationSeconds)
 $gpuAvailable = -not $SkipGpu
-while ([DateTimeOffset]::Now -lt $until) {
-    $now = [DateTimeOffset]::Now
+while ($clock.Elapsed.TotalSeconds -lt $DurationSeconds) {
     $processes = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
-    $cpuSeconds = 0.0
-    $workingSet = 0L
-    $privateBytes = 0L
+    $samples = @()
     $current = @{}
-    foreach ($process in $processes) {
-        $id = $process.Id
-        $total = $process.TotalProcessorTime.TotalSeconds
-        $current[$id] = $total
-        if ($previous.ContainsKey($id)) { $cpuSeconds += [Math]::Max(0, $total - $previous[$id]) }
-        $workingSet += $process.WorkingSet64
-        $privateBytes += $process.PrivateMemorySize64
-    }
-    $elapsed = ($now - $previousAt).TotalSeconds
-    $cpu = if ($elapsed -gt 0 -and $previous.Count -gt 0) { 100 * $cpuSeconds / $elapsed / $logicalProcessors } else { $null }
-    $gpu = $null
+    $engines = @{}
+    $gpuMemory = @{}
     if ($gpuAvailable -and $processes.Count -gt 0) {
         try {
             $ids = @($processes.Id)
-            $engines = @{}
             foreach ($engine in Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine) {
                 if ($engine.Name -match '^pid_(\d+)_(.+)$' -and $ids -contains [int]$Matches[1]) {
-                    $key = $Matches[2]
-                    if (-not $engines.ContainsKey($key)) { $engines[$key] = 0.0 }
-                    $engines[$key] += [double]$engine.UtilizationPercentage
+                    $pidKey = [int]$Matches[1]; $engineKey = $Matches[2]
+                    if (-not $engines.ContainsKey($pidKey)) { $engines[$pidKey] = @{} }
+                    $engines[$pidKey][$engineKey] = [double]$engine.UtilizationPercentage
                 }
             }
-            # Maximum busy engine, with the app's processes summed per engine.
-            # This is not a sum of parallel engines and cannot exceed 100%.
-            if ($engines.Count -gt 0) { $gpu = [Math]::Min(100, ($engines.Values | Measure-Object -Maximum).Maximum) }
-        } catch { $gpuAvailable = $false; Write-Warning 'GPU counters unavailable; GPU columns stay empty.' }
+            foreach ($memory in Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory) {
+                if ($memory.Name -match '^pid_(\d+)_' -and $ids -contains [int]$Matches[1]) {
+                    $pidKey = [int]$Matches[1]
+                    if (-not $gpuMemory.ContainsKey($pidKey)) { $gpuMemory[$pidKey] = @(0.0, 0.0) }
+                    $gpuMemory[$pidKey][0] += [double]$memory.DedicatedUsage / 1MB
+                    $gpuMemory[$pidKey][1] += [double]$memory.SharedUsage / 1MB
+                }
+            }
+        } catch {
+            $gpuAvailable = $false; $engines = @{}; $gpuMemory = @{}
+            Write-Warning 'GPU counters unavailable; GPU columns stay empty.'
+        }
     }
-    $rows.Add([pscustomobject]@{
-        Time = $now.ToString('o'); Label = $Label; Processes = $processes.Count
-        CPUPercent = $cpu; WorkingSetMiB = $workingSet / 1MB
-        PrivateMiB = $privateBytes / 1MB; GPUBusiestEnginePercent = $gpu
-    })
-    $previous = $current
-    $previousAt = $now
-    Start-Sleep -Seconds $IntervalSeconds
+    $at = $clock.Elapsed.TotalSeconds
+    $elapsed = $at - $previousAt
+    $now = [DateTimeOffset]::Now.ToString('o')
+    foreach ($process in $processes) {
+        try {
+            $id = $process.Id
+            $identity = "$id/$($process.StartTime.ToUniversalTime().Ticks)"
+            $total = $process.TotalProcessorTime.TotalSeconds
+            $current[$identity] = $total
+            $delta = if ($previous.ContainsKey($identity)) { [Math]::Max(0.0, $total - $previous[$identity]) } else { $null }
+            $cpu = if ($null -ne $delta) { Get-NormalizedCpu $delta $elapsed $logicalProcessors } else { $null }
+            if (-not $roles.ContainsKey($identity)) {
+                $roles[$identity] = 'unknown'
+                if ($ProcessName -eq 'time-flows-away-native' -and $env:OS -eq 'Windows_NT') {
+                    try {
+                        $line = (Get-CimInstance Win32_Process -Filter "ProcessId=$id").CommandLine
+                        $roles[$identity] = if ($line -match '(?:^|\s)--settings(?:\s|$)') { 'settings' } elseif ($line -match '(?:^|\s)--preview(?:\s|$)') { 'preview' } elseif ($line -match '(?:^|\s)--wallpaper-worker(?:\s|$)') { 'renderer' } else { 'supervisor' }
+                    } catch { Write-Warning "Cannot identify role of PID $id." }
+                }
+            }
+            $gpu = if ($engines.ContainsKey($id)) { Get-BusiestGpuEngine @($engines[$id].Values) } else { $null }
+            $dedicated = if ($gpuMemory.ContainsKey($id)) { $gpuMemory[$id][0] } else { $null }
+            $shared = if ($gpuMemory.ContainsKey($id)) { $gpuMemory[$id][1] } else { $null }
+            $sample = [pscustomobject]@{
+                Time = $now; Label = $Label; Role = $roles[$identity]; PID = $id; Processes = 1
+                IntervalSeconds = $elapsed; CpuSeconds = $total; SampleCpuSeconds = $delta
+                CPUPercent = $cpu; CPUComplete = ($null -ne $cpu)
+                WorkingSetMiB = $process.WorkingSet64 / 1MB; PrivateMiB = $process.PrivateMemorySize64 / 1MB
+                Handles = $process.HandleCount; Threads = $process.Threads.Count
+                GPU3DPercent = Get-GpuEngineUsage $engines[$id] 3D
+                GPUCopyPercent = Get-GpuEngineUsage $engines[$id] Copy
+                GPUVideoDecodePercent = Get-GpuEngineUsage $engines[$id] VideoDecode
+                GPUVideoEncodePercent = Get-GpuEngineUsage $engines[$id] VideoEncode
+                GPUBusiestEnginePercent = $gpu; GPUDedicatedMiB = $dedicated; GPUSharedMiB = $shared
+            }
+            $rows.Add($sample); $samples += $sample
+        } catch { Write-Warning "PID $($process.Id) exited while sampling; skipped." }
+    }
+    $complete = $samples.Count -gt 0 -and @($samples | Where-Object { -not $_.CPUComplete }).Count -eq 0
+    $totalEngines = @{}
+    foreach ($perPid in $engines.Values) {
+        foreach ($key in $perPid.Keys) {
+            if (-not $totalEngines.ContainsKey($key)) { $totalEngines[$key] = 0.0 }
+            $totalEngines[$key] += $perPid[$key]
+        }
+    }
+    $total = [pscustomobject]@{
+        Time = $now; Label = $Label; Role = 'TOTAL'; PID = 0; Processes = $samples.Count
+        IntervalSeconds = $elapsed; CpuSeconds = ($samples | Measure-Object CpuSeconds -Sum).Sum
+        SampleCpuSeconds = $(if ($complete) { ($samples | Measure-Object SampleCpuSeconds -Sum).Sum } else { $null })
+        CPUPercent = $(if ($complete) { ($samples | Measure-Object CPUPercent -Sum).Sum } else { $null }); CPUComplete = $complete
+        WorkingSetMiB = ($samples | Measure-Object WorkingSetMiB -Sum).Sum; PrivateMiB = ($samples | Measure-Object PrivateMiB -Sum).Sum
+        Handles = ($samples | Measure-Object Handles -Sum).Sum; Threads = ($samples | Measure-Object Threads -Sum).Sum
+        GPU3DPercent = Get-GpuEngineUsage $totalEngines 3D
+        GPUCopyPercent = Get-GpuEngineUsage $totalEngines Copy
+        GPUVideoDecodePercent = Get-GpuEngineUsage $totalEngines VideoDecode
+        GPUVideoEncodePercent = Get-GpuEngineUsage $totalEngines VideoEncode
+        GPUBusiestEnginePercent = Get-BusiestGpuEngine @($totalEngines.Values)
+        GPUDedicatedMiB = $(if ($gpuMemory.Count -gt 0) { ($samples | Measure-Object GPUDedicatedMiB -Sum).Sum } else { $null })
+        GPUSharedMiB = $(if ($gpuMemory.Count -gt 0) { ($samples | Measure-Object GPUSharedMiB -Sum).Sum } else { $null })
+    }
+    $rows.Add($total)
+    $previous = $current; $previousAt = $at
+    $remaining = [Math]::Min([double]$IntervalSeconds, [double]$DurationSeconds - $clock.Elapsed.TotalSeconds)
+    if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int]($remaining * 1000)) }
 }
-if (($rows | Measure-Object -Property Processes -Maximum).Maximum -eq 0) {
+if (@($rows | Where-Object { $_.Role -eq 'TOTAL' -and $_.Processes -gt 0 }).Count -eq 0) {
     throw "No running process named $ProcessName was found. Start the app before measuring."
 }
-$rows | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
-$summary = foreach ($property in 'CPUPercent','WorkingSetMiB','PrivateMiB','GPUBusiestEnginePercent') {
-    # Ignore unavailable/initial samples instead of treating them as zero use.
-    $available = @($rows | Where-Object { $null -ne $_.$property })
-    if ($available.Count -gt 0) { $available | Measure-Object -Property $property -Average -Maximum }
+Export-InvariantCsv $rows $OutputPath
+$totals = @($rows | Where-Object { $_.Role -eq 'TOTAL' })
+foreach ($property in 'CPUPercent','WorkingSetMiB','PrivateMiB','GPUBusiestEnginePercent') {
+    @($totals | Where-Object { $null -ne $_.$property }) | Measure-Object -Property $property -Average -Maximum | Format-Table -AutoSize
 }
-$summary | Format-Table -AutoSize
-Write-Host "Saved: $OutputPath (CPU normalized across $logicalProcessors logical processors; empty GPU means unavailable)."
+Write-Host "Saved: $OutputPath (per-PID and TOTAL; CPU normalized across $logicalProcessors logical processors; empty means unavailable)."

@@ -18,9 +18,9 @@ pub struct Tray {
 impl Tray {
     pub fn new(ctx: &egui::Context) -> Result<Self, String> {
         let menu = Menu::new();
-        let settings = MenuItem::new("Settings…", true, None);
-        let pause = MenuItem::new("Pause", true, None);
-        let quit = MenuItem::new("Quit", true, None);
+        let settings = MenuItem::new("&Settings…", true, None);
+        let pause = MenuItem::new("&Pause", true, None);
+        let quit = MenuItem::new("&Quit", true, None);
         menu.append_items(&[&settings, &pause, &PredefinedMenuItem::separator(), &quit])
             .map_err(|e| e.to_string())?;
         let mut rgba = vec![0u8; 32 * 32 * 4];
@@ -81,7 +81,8 @@ impl Tray {
         self.events.try_iter().collect()
     }
     pub fn paused(&self, paused: bool) {
-        self.pause.set_text(if paused { "Resume" } else { "Pause" });
+        self.pause
+            .set_text(if paused { "&Resume" } else { "&Pause" });
         let _ = self._icon.set_tooltip(Some(if paused {
             "Time Flows Away — Paused"
         } else {

@@ -213,12 +213,55 @@ Frame deadlines compensate egui's predicted-frame subtraction, preventing the
 Interactive egui events can request additional paints.
 
 Use `time-flows-away-native.exe --performance` for aggregated diagnostics every
-30 seconds in app.log: actual update FPS, average app/backend processing times,
-frame-interval p95, atlas size and text/emoji texture cache size. The flag is
-preserved by the supervisor and settings child. The backend time excludes VSync
-waiting and is not a process CPU percentage. Use `Measure-Performance.ps1` for
-CPU/RAM/GPU, with settings closed for wallpaper-only comparisons. Discard startup
-samples and compare identical resolution, DPI, content and actual frame rates.
+30 seconds in app.log: actual UI-update FPS, target FPS/mode, average and maximum
+update time, interval p95/p99/max, slow 60 FPS intervals (>20/>25 ms), layout/raster
+misses and elapsed layout/raster/filter/texture-preparation stages. These intervals
+are measured between UI updates, not SwapBuffers or DWM presentation. The backend
+time includes the previous App::update; do not add it to update_ms or interpret it
+as process CPU. Stage totals are elapsed time, not a CPU attribution. Glyph filter
+is separate; emoji/whole-line fallback filtering is included in raster_total_ms.
+Metrics windows reset on changes of activity/rate. Startup logs contain version,
+commit and applied FPS/HQ; supervisor logs child PID, exit status and restart decision.
+CI artifacts include build-manifest.json with the executable SHA-256.
+
+Windows text is shaped by DirectWrite into actual glyph IDs, fallback font faces,
+advances, offsets and bidi positions. Grayscale glyph bitmaps retain the 3x HQ
+supersampling and premultiplied Lanczos filtering; shared texture pages avoid a
+separate draw call/texture per digit. A maximum of 512 glyphs and a shared 32 MiB
+text/emoji texture budget bound the cache. Font, quality, DPI and configured size
+changes clear it. Sideways/inline/decorated/unsupported layouts retain a whole-line
+fallback. Color emoji remain on the existing Windows color-font path. Arbitrary
+Unicode is shaped as a string, never measured one character at a time.
+
+Background decode/filter runs on one sleeping worker with one pending request and
+one result. Superseded results are discarded; a prior texture stays until a new
+image is ready. JPEG uses native 1/2, 1/4 or 1/8 DCT scaling before final Lanczos
+filtering. Non-interlaced PNG is decoded by rows, with horizontal downsampling
+before allocating the intermediate crop. Alpha is filtered premultiplied. EXIF
+orientation and central cover crop are preserved. Adam7/oriented PNG and uncommon
+JPEG formats use the bounded image decoder fallback; their peak memory can remain
+higher, as can coefficient buffers in progressive JPEG. There is no universal
+150 MiB limit. Source dimensions remain bounded to 8192 and textures to 4096.
+
+Use `Measure-Performance.ps1` for per-PID/role and TOTAL CPU/RAM/GPU readings,
+with settings closed and Wallpaper Engine stopped for the baseline. CPU uses
+monotonic intervals and fractional accumulated CPU time normalized across logical
+processors. Initial samples/new PIDs are unavailable, not zero; totals are complete
+only when all current PIDs have a CPU baseline. GPU columns are empty if counters
+are missing. CSV numbers use invariant culture and UTF-8 BOM in PS 5.1/7. Default
+sampling interval is one second. Discard startup samples and compare identical
+resolution, DPI, content and actual frame rates; use TOTAL rows for overall load.
+
+The normal build preserves eframe's Windows context-rebinding workaround for
+https://github.com/emilk/egui/issues/4289. `Build-GlContextPrototype.ps1` copies the
+source and eframe into a fresh directory and builds an isolated experimental fast
+path. Compilation is insufficient: compare native CPU and validate desktop/preview,
+settings/file picker, resize/minimize/restore, DPI and Explorer recovery before
+considering this change for the normal build. See OPTIMIZATION-CHECKLIST.md.
+`Inspect-TrayAccessibility.ps1` records native menu UIA Raw/Control and MSAA data;
+Narrator and keyboard activation still require Windows acceptance. Menu mnemonics
+are Settings/Pause/Resume/Quit (S/P/R/Q); string menu items retain native accessibility.
+
 Settings launched from the tray track an opened handle to the persistent
 supervisor, so they survive renderer recovery but close when the application
 exits. Quit also posts WM_CLOSE to the settings HWND after verifying its executable

@@ -26,6 +26,10 @@ impl WallpaperApp {
         if let Some(error) = &store.error {
             crate::diagnostics::event(&format!("Invalid settings; using defaults: {error}"));
         }
+        crate::diagnostics::event(&format!(
+            "Settings applied: revision=0 fps={} hq={}",
+            store.current.animation_fps, store.current.high_quality_text
+        ));
         let mut assets = Assets::new();
         assets.prepare(&cc.egui_ctx, &store.current);
         if let Some(error) = assets.error() {
@@ -77,7 +81,8 @@ impl WallpaperApp {
             settings: None,
         }
     }
-    fn close(&mut self, ctx: &egui::Context) {
+    fn close(&mut self, ctx: &egui::Context, reason: &str) {
+        crate::diagnostics::event(&format!("Exit: reason={reason}"));
         #[cfg(windows)]
         if self.options.worker {
             crate::platform::close_settings();
@@ -142,7 +147,7 @@ impl eframe::App for WallpaperApp {
                     crate::tray::Command::Settings => self.open_settings(),
                     crate::tray::Command::TogglePause => self.pause(now.naive_local()),
                     crate::tray::Command::Quit => {
-                        self.close(ctx);
+                        self.close(ctx, "tray");
                         return;
                     }
                 }
@@ -150,7 +155,12 @@ impl eframe::App for WallpaperApp {
         }
         if let Some(desktop) = self.desktop.as_mut() {
             if desktop.exit_requested() || ctx.input(|i| i.viewport().close_requested()) {
-                self.close(ctx);
+                let reason = if desktop.exit_requested() {
+                    "chord"
+                } else {
+                    "window_close"
+                };
+                self.close(ctx, reason);
                 return;
             }
             if let Err(error) = desktop.maintain() {
@@ -170,8 +180,12 @@ impl eframe::App for WallpaperApp {
                 }
             }
         } else {
+            if ctx.input(|i| i.viewport().close_requested()) {
+                self.close(ctx, "window_close");
+                return;
+            }
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.close(ctx);
+                self.close(ctx, "escape");
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
                 self.pause(now.naive_local());
@@ -179,7 +193,12 @@ impl eframe::App for WallpaperApp {
         }
         let previous_error = self.store.error.clone();
         if self.store.refresh() {
-            crate::diagnostics::event("Settings reloaded");
+            crate::diagnostics::event(&format!(
+                "Settings applied: revision={} fps={} hq={}",
+                self.store.revision,
+                self.store.current.animation_fps,
+                self.store.current.high_quality_text
+            ));
         }
         if self.store.error != previous_error
             && let Some(error) = &self.store.error
@@ -212,6 +231,19 @@ impl eframe::App for WallpaperApp {
         } else {
             animation_fps
         };
+        self.performance.state(
+            if self.paused.is_some() {
+                "paused"
+            } else if suspended {
+                "suspended"
+            } else if animation_fps == 0 {
+                "idle"
+            } else {
+                "visible"
+            },
+            animation_fps,
+            &self.assets.text,
+        );
         let progress = self.assets.animation.sample(
             sampled,
             frame_started,

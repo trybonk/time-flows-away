@@ -1,4 +1,6 @@
 #[cfg(any(windows, test))]
+mod hold;
+#[cfg(any(windows, test))]
 mod order;
 #[cfg(windows)]
 pub mod supervisor;
