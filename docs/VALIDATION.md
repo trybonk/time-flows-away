@@ -310,7 +310,7 @@ The follow-up Windows run supplies release packaging results.
 
 ## 0.3.2 — diagnostics-driven optimization (2026-10-11)
 
-Source implementation: `2282d53` plus the follow-up performance-mode correction
+Source implementation: `2282d53` plus performance-mode correction `32ad6a0`
 on `feat/settings-and-tray`.
 
 Implemented native shaped-glyph atlases, 3x HQ filtering, asynchronous latest-request
@@ -346,10 +346,15 @@ Checks completed in this cloud instance:
   unverified; no dependency workaround was removed from the normal build.
 - Windows MSVC formatting, Clippy, native tests (including glyph reuse and native
   shaping/color coverage), PowerShell 5.1/7 arithmetic/CSV/lock tests and live
-  CPU/RAM helper smoke passed in Actions run 38175412539. Release/packaging status
-  is recorded below when complete. A follow-up explicitly labels covered/off
-  states and prevents configured 60 FPS during pause from counting idle intervals
-  as slow frames; it also starts a fresh metrics window on HQ/LQ changes.
+  CPU/RAM helper smoke passed in Actions run 38175412539. Release, packaging and artifact upload also passed. The final correction
+  `32ad6a0` passed the complete Windows workflow, including release, packaging and
+  upload, in run 38176079061. That artifact is the final 0.3.2 acceptance build.
+
+- A live debug OpenGL diagnostic window with configured 60 FPS was paused for
+  33 seconds. Its aggregate had target_fps=0, actual UI cadence ~1.1/s, idle
+  interval max ~1968 ms, and slow20=slow25=0. Changing HQ to LQ emitted a new
+  paused metrics window; Escape exited with code zero. This validates actual
+  aggregation/classification, not only the statistics helper in isolation.
 
 Live Windows acceptance remains necessary: CPU/p99 before-and-after at identical
 actual FPS, startup/foreground flashes, chord behavior in idle/covered/settings,
