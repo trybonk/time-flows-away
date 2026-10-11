@@ -310,7 +310,8 @@ The follow-up Windows run supplies release packaging results.
 
 ## 0.3.2 — diagnostics-driven optimization (2026-10-11)
 
-Source implementation: `2282d53` on `feat/settings-and-tray`.
+Source implementation: `2282d53` plus the follow-up performance-mode correction
+on `feat/settings-and-tray`.
 
 Implemented native shaped-glyph atlases, 3x HQ filtering, asynchronous latest-request
 background loading, early JPEG DCT scaling and row-wise ordinary PNG downsampling.
@@ -324,7 +325,7 @@ path prototype build script provide the next Windows-specific checks.
 
 Checks completed in this cloud instance:
 
-- 32 Linux tests passed, none ignored. Linux and Windows GNU all-target Clippy
+- 33 Linux tests passed, none ignored. Linux and Windows GNU all-target Clippy
   passed with warnings denied; release builds for both targets completed.
 - PowerShell 7.5.4 arithmetic, GPU-kind selection, invariant/Unicode/BOM CSV and
   temporary output-lock retry checks passed. Live per-PID/TOTAL CPU/RAM sampling
@@ -346,7 +347,9 @@ Checks completed in this cloud instance:
 - Windows MSVC formatting, Clippy, native tests (including glyph reuse and native
   shaping/color coverage), PowerShell 5.1/7 arithmetic/CSV/lock tests and live
   CPU/RAM helper smoke passed in Actions run 38175412539. Release/packaging status
-  is recorded below when complete.
+  is recorded below when complete. A follow-up explicitly labels covered/off
+  states and prevents configured 60 FPS during pause from counting idle intervals
+  as slow frames; it also starts a fresh metrics window on HQ/LQ changes.
 
 Live Windows acceptance remains necessary: CPU/p99 before-and-after at identical
 actual FPS, startup/foreground flashes, chord behavior in idle/covered/settings,

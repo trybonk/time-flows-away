@@ -220,24 +220,27 @@ impl eframe::App for WallpaperApp {
             .desktop
             .as_ref()
             .is_some_and(|d| d.rendering_suspended());
-        let animation_fps = self.store.current.animation_fps;
+        #[cfg(not(windows))]
+        let covered = false;
         #[cfg(windows)]
-        let animation_fps = if self
+        let covered = self
             .desktop
             .as_ref()
-            .is_some_and(|desktop| !desktop.animation_visible())
-        {
+            .is_some_and(|desktop| !desktop.animation_visible());
+        let animation_fps = if covered {
             0
         } else {
-            animation_fps
+            self.store.current.animation_fps
         };
         self.performance.state(
             if self.paused.is_some() {
                 "paused"
             } else if suspended {
                 "suspended"
+            } else if covered {
+                "covered"
             } else if animation_fps == 0 {
-                "idle"
+                "off"
             } else {
                 "visible"
             },

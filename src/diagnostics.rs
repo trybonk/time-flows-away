@@ -33,6 +33,7 @@ pub struct Performance {
     mode: &'static str,
     state: &'static str,
     fps: u32,
+    high_quality: bool,
     started: std::time::Instant,
     frames: u32,
     updates: std::time::Duration,
@@ -58,6 +59,7 @@ impl Performance {
             mode,
             state: "initial",
             fps: 0,
+            high_quality: true,
             started: std::time::Instant::now(),
             frames: 0,
             updates: std::time::Duration::ZERO,
@@ -80,15 +82,22 @@ impl Performance {
         if !self.enabled {
             return;
         }
-        if self.state != state || self.fps != fps {
+        // A configured 60 FPS rate is not an active rendering deadline while idle.
+        let fps = if matches!(state, "visible" | "active") {
+            fps
+        } else {
+            0
+        };
+        if self.state != state || self.fps != fps || self.high_quality != text.high_quality {
             self.reset(std::time::Instant::now());
             self.previous = None;
             self.baseline = text.metrics;
             self.state = state;
             self.fps = fps;
+            self.high_quality = text.high_quality;
             event(&format!(
-                "Performance mode: mode={} state={state} target_fps={fps}",
-                self.mode
+                "Performance mode: mode={} state={state} target_fps={fps} hq={}",
+                self.mode, self.high_quality
             ));
         }
     }
@@ -173,6 +182,19 @@ impl Performance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn idle_states_disable_sixty_fps_slow_frame_classification() {
+        let text = Default::default();
+        let mut performance = Performance::new(true, "wallpaper");
+        for state in ["paused", "covered", "suspended", "off", "inactive"] {
+            performance.state(state, 60, &text);
+            assert_eq!(performance.fps, 0);
+        }
+        performance.state("visible", 60, &text);
+        assert_eq!(performance.fps, 60);
+        performance.state("active", 30, &text);
+        assert_eq!(performance.fps, 30);
+    }
     #[test]
     fn p99_exposes_regular_stalls_hidden_by_p95() {
         let mut samples = vec![16.7; 1770];
