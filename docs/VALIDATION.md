@@ -306,3 +306,52 @@ helper smoke interval. The corrected CI smoke measures CPU/RAM with SkipGpu;
 ordinary PC measurements retain GPU sampling. Missing counters and initial CPU
 samples are omitted from averages instead of being reported as zero use.
 The follow-up Windows run supplies release packaging results.
+
+
+## 0.3.2 — diagnostics-driven optimization (2026-10-11)
+
+Source implementation: `2282d53` on `feat/settings-and-tray`.
+
+Implemented native shaped-glyph atlases, 3x HQ filtering, asynchronous latest-request
+background loading, early JPEG DCT scaling and row-wise ordinary PNG downsampling.
+Config reload now detects changed bytes with equal size/mtime and retains valid
+settings on errors. Exit chord uses a monotonic one-second hold on the existing
+monitor thread, independent of paint cadence. Added lifecycle/PID/status logs,
+p99/max/slow-frame and cache/stage diagnostics, whole-second config poll phase,
+startup-path warnings and native menu mnemonics. The normal eframe Windows context
+workaround remains enabled. Accessibility inspector and an isolated context-fast-
+path prototype build script provide the next Windows-specific checks.
+
+Checks completed in this cloud instance:
+
+- 32 Linux tests passed, none ignored. Linux and Windows GNU all-target Clippy
+  passed with warnings denied; release builds for both targets completed.
+- PowerShell 7.5.4 arithmetic, GPU-kind selection, invariant/Unicode/BOM CSV and
+  temporary output-lock retry checks passed. Live per-PID/TOTAL CPU/RAM sampling
+  produced four TOTAL samples; fractional CPU matched deltas/monotonic intervals,
+  and unavailable GPU values remained empty.
+- Release OpenGL GUI check: five interpolated frames while digits stayed unchanged;
+  pause froze bars/digits; HQ/LQ changed the same paused text rasterization; Off
+  retained twelve stable sampled frames; Escape exited with code zero. This
+  development check exercises Linux fonts, not Windows DirectWrite quality.
+- Release OpenGL GUI loaded synthetic 7680x4320 baseline JPEG and RGBA PNG,
+  displayed the correct colors, cleared the background, detected 30->60 FPS with
+  original byte length/mtime preserved, and exited cleanly. Linux software-GL RSS
+  was ~119 MiB baseline / ~133 MiB after JPEG / ~163 MiB after PNG; cumulative
+  VmHWM ~122/~147/~163 MiB. These are one short functional run on a different
+  machine/driver, not a before/after Windows benchmark or a universal memory limit.
+- An isolated eframe 0.33.3 Windows context-fast-path prototype compiled with the
+  Windows GNU target. Its rendering/recovery behavior and CPU benefit remain
+  unverified; no dependency workaround was removed from the normal build.
+- Windows MSVC formatting, Clippy, native tests (including glyph reuse and native
+  shaping/color coverage), PowerShell 5.1/7 arithmetic/CSV/lock tests and live
+  CPU/RAM helper smoke passed in Actions run 38175412539. Release/packaging status
+  is recorded below when complete.
+
+Live Windows acceptance remains necessary: CPU/p99 before-and-after at identical
+actual FPS, startup/foreground flashes, chord behavior in idle/covered/settings,
+long soak, sleep/lock/Explorer/DPI transitions, same-text quality screenshots,
+startup repair and Narrator/MSAA menu behavior. See OPTIMIZATION-CHECKLIST.md.
+Adam7/oriented PNG and uncommon JPEG use a full-decode fallback; progressive JPEG
+coefficient buffers can remain large. Do not claim every 8K load fits 150 MiB or
+that resource growth/Windows rendering issues are ruled out by these tests.
