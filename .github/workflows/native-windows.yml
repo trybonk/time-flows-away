@@ -2,25 +2,41 @@ name: Windows build
 on:
   push:
     branches: [master, "feat/**"]
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', '.github/workflows/native-windows.yml']
+    tags: ["v*"]
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', 'docs/releases/**', '.github/workflows/native-windows.yml']
   pull_request:
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', '.github/workflows/native-windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'build.rs', 'docs/*.ps1', 'docs/releases/**', '.github/workflows/native-windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: native-windows-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: 2
-      TFA_BUILD_COMMIT: ${{ github.sha }}
       RUSTFLAGS: "-C target-feature=+crt-static"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Record build commit and validate release tag
+        shell: pwsh
+        run: |
+          $commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve build commit.' }
+          "TFA_BUILD_COMMIT=$commit" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "TFA_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -cne "v$version") { throw 'Release tag must match Cargo.toml version.' }
+            git merge-base --is-ancestor HEAD origin/master
+            if ($LASTEXITCODE -ne 0) { throw 'Release commit must belong to master.' }
+            if (!(Test-Path "docs/releases/v$version.md")) { throw 'Missing release notes for this version.' }
+          }
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: |
@@ -63,8 +79,9 @@ jobs:
           Copy-Item README.md, NOTICE, LICENSE target/dist/
           Copy-Item -Recurse docs target/dist/docs
           $manifest = [ordered]@{
-            version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-            commit = $env:GITHUB_SHA
+            version = $env:TFA_BUILD_VERSION
+            commit = $env:TFA_BUILD_COMMIT
+            tag = $(if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { $null })
             workflowRun = $env:GITHUB_RUN_ID
             builtAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
             executable = 'time-flows-away-native.exe'
@@ -77,3 +94,54 @@ jobs:
           name: time-flows-away-windows-x64
           path: target/dist/
           if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: time-flows-away-windows-x64
+          path: target/dist
+      - name: Create versioned archive and verify executable checksum
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, zipfile
+          dist = pathlib.Path('target/dist')
+          manifest = json.loads((dist / 'build-manifest.json').read_text(encoding='utf-8-sig'))
+          tag = os.environ['RELEASE_TAG']
+          if manifest['tag'] != tag or 'v' + manifest['version'] != tag:
+              raise SystemExit('Artifact version/tag mismatch')
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if manifest['commit'] != commit:
+              raise SystemExit('Artifact commit mismatch')
+          executable = dist / 'time-flows-away-native.exe'
+          if hashlib.sha256(executable.read_bytes()).hexdigest().lower() != manifest['sha256'].lower():
+              raise SystemExit('Executable checksum mismatch')
+          archive = pathlib.Path(f'time-flows-away-{tag}-windows-x64.zip')
+          with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as output:
+              for path in sorted(dist.rglob('*')):
+                  if path.is_file():
+                      output.write(path, path.relative_to(dist))
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          archive.with_suffix('.zip.sha256').write_text(f'{digest}  {archive.name}\n', encoding='utf-8')
+          PY
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "time-flows-away-$RELEASE_TAG-windows-x64.zip" \
+            "time-flows-away-$RELEASE_TAG-windows-x64.zip.sha256" \
+            target/dist/build-manifest.json \
+            --verify-tag --title "Time Flows Away $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md" \
+            --prerelease --latest=false

@@ -363,3 +363,25 @@ startup repair and Narrator/MSAA menu behavior. See OPTIMIZATION-CHECKLIST.md.
 Adam7/oriented PNG and uncommon JPEG use a full-decode fallback; progressive JPEG
 coefficient buffers can remain large. Do not claim every 8K load fits 150 MiB or
 that resource growth/Windows rendering issues are ruled out by these tests.
+
+## First pre-release preparation (2026-10-12)
+
+The user reported that the latest downloaded Windows build works correctly and
+authorized the first pre-release. The native application code is unchanged from
+the accepted 0.3.2 implementation. Earlier deferral of release publication is
+superseded by this authorization; detailed Windows scenarios above remain the
+record of what has and has not been measured.
+
+The old web `master` commit is preserved on `legacy`. Native/settings history is
+combined on the new `master` without discarding commits. Release automation now
+validates the version tag and master ancestry, repeats the Windows checks, and
+publishes a versioned ZIP, ZIP SHA-256 and executable build manifest as a
+pre-release. The tag build supplies the Windows MSVC artifact; local cross-built
+binaries are used only to exercise packaging.
+
+Release preparation checks: formatting, all-target Linux Clippy with warnings
+denied and all 33 Linux tests passed. Workflow structure and embedded Bash,
+Python and PowerShell syntax passed. Packaging a real Windows GNU executable
+produced the expected ZIP contents and matching hashes; the publisher rejected a
+deliberately corrupted executable before publication. Windows MSVC/tag-job
+results are available in the release's linked Actions run and build manifest.

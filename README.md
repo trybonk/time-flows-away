@@ -40,11 +40,10 @@ its installed system fonts.*
 on the **primary display**. This project is in active development; see the
 [validation results](docs/VALIDATION.md).
 
-1. Open [Windows build](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml)
-   and select a successful run for `feat/settings-and-tray`, the current
-   development branch.
-2. Download the **time-flows-away-windows-x64** artifact and extract the ZIP.
-   GitHub requires you to sign in to download workflow artifacts.
+1. Open [Releases](https://github.com/trybonk/time-flows-away/releases).
+2. Download **time-flows-away-v0.3.2-windows-x64.zip** from the v0.3.2 pre-release
+   and extract it to a permanent folder. The ZIP includes documentation and a
+   build manifest; its SHA-256 checksum is available beside the download.
 3. Run **time-flows-away-native.exe**. Administrator rights are not required.
 
 Right-click the tray clock for **Settings**, **Pause / Resume**, or **Quit**.
@@ -85,10 +84,15 @@ cargo build --locked --release
 
 The Rust toolchain and dependencies are pinned. GitHub Actions runs formatting,
 Clippy, tests, and a Windows release build, then uploads the EXE and documentation.
+Development builds are available as **time-flows-away-windows-x64** artifacts
+from successful [Windows build](https://github.com/trybonk/time-flows-away/actions/workflows/native-windows.yml)
+runs for `master` (artifact downloads require GitHub sign-in).
+`master` contains the native application; `legacy` preserves the original web project.
 
 - [Development and architecture](docs/DEVELOPMENT.md)
 - [Windows manual checks](docs/SETTINGS-CHECKLIST.md)
 - [Validation results](docs/VALIDATION.md)
+- [Release process](docs/RELEASING.md)
 - [Original Wallpaper Engine version](legacy/wallpaper-engine/README.md)
 
 ## License and credits

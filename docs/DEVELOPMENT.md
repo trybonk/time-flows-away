@@ -48,6 +48,10 @@ or master, and manual dispatch. Download `time-flows-away-windows-x64` from the
 run's artifacts and extract the executable. CI compilation does **not** test
 desktop embedding. Commands run from the repository root; binaries are under
 `target/release/`, and the CI artifact includes the `docs/` directory.
+Tags matching the Cargo version (for example `v0.3.2`) also run the full Windows
+checks, then publish a GitHub pre-release with a versioned ZIP, its SHA-256 and
+the build manifest. Release tags must point to commits in `master` and have
+version-specific notes in `docs/releases/`. See [release process](RELEASING.md).
 
 ## Assets and saved settings
 
